@@ -23,19 +23,23 @@ type Agent struct {
 	u              upstream.Upstream
 }
 
-func New(cfg *config.Config) *Agent {
+func New(cfg *config.Config) (*Agent, error) {
 	// TODO: handle this error properly
-	r, _ := remote.New(remote.RemoteConfig{
+	rc := remote.RemoteConfig{
 		UpstreamThreads:        cfg.Agent.UpstreamThreads,
 		UpstreamAddress:        cfg.Agent.ServerAddress,
 		UpstreamRequestTimeout: cfg.Agent.UpstreamRequestTimeout,
-	})
-	r.Logger = logrus.StandardLogger()
+	}
+	upstream, err := remote.New(rc, logrus.StandardLogger())
+	if err != nil {
+		return nil, err
+	}
+
 	return &Agent{
 		cfg:            cfg,
+		u:              upstream,
 		activeProfiles: make(map[int]*agent.ProfileSession),
-		u:              r,
-	}
+	}, nil
 }
 
 func (a *Agent) Start() error {
@@ -63,7 +67,8 @@ func (a *Agent) controlSocketHandler(req *csock.Request) *csock.Response {
 		// TODO: pass withSubprocesses from somewhere
 		// TODO: pass appName from somewhere
 		// TODO: add sample rate
-		s := agent.NewSession(&agent.SessionConfig{
+
+		sc := agent.SessionConfig{
 			Upstream:         a.u,
 			AppName:          "testapp",
 			ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU, spy.ProfileAllocObjects, spy.ProfileAllocSpace, spy.ProfileInuseObjects, spy.ProfileInuseSpace},
@@ -72,10 +77,11 @@ func (a *Agent) controlSocketHandler(req *csock.Request) *csock.Response {
 			UploadRate:       10 * time.Second,
 			Pid:              0,
 			WithSubprocesses: false,
-		})
-		s.Logger = logrus.StandardLogger()
+		}
+		s := agent.NewSession(&sc, logrus.StandardLogger())
 		a.activeProfiles[profileID] = s
 		s.Start()
+
 		return &csock.Response{ProfileID: profileID}
 	case "stop":
 		// TODO: "testapp.cpu{}" should come from the client

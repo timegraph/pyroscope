@@ -228,6 +228,21 @@ func resolvePath(path string) string {
 }
 
 func generateRootCmd(cfg *config.Config) *ffcli.Command {
+	// init the log formatter for logrus
+	logrus.SetReportCaller(true)
+	logrus.SetFormatter(&logrus.TextFormatter{
+		TimestampFormat: "02-01-2006 15:04:05",
+		FullTimestamp:   true,
+		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
+			filename := f.File
+			parts := strings.Split(f.File, "/")
+			if count := len(parts); count > 1 {
+				filename = parts[count-2] + "/" + parts[count-1]
+			}
+			return "", fmt.Sprintf(" %s:%d", filename, f.Line)
+		},
+	})
+
 	var (
 		serverFlagSet    = flag.NewFlagSet("pyroscope server", flag.ExitOnError)
 		convertFlagSet   = flag.NewFlagSet("pyroscope convert", flag.ExitOnError)
@@ -311,11 +326,13 @@ func generateRootCmd(cfg *config.Config) *ffcli.Command {
 	}
 
 	serverCmd.Exec = func(_ context.Context, args []string) error {
-		if l, err := logrus.ParseLevel(cfg.Server.LogLevel); err == nil {
-			logrus.SetLevel(l)
+		l, err := logrus.ParseLevel(cfg.Server.LogLevel)
+		if err != nil {
+			return err
 		}
-		startServer(cfg)
-		return nil
+		logrus.SetLevel(l)
+
+		return startServer(cfg)
 	}
 	convertCmd.Exec = func(_ context.Context, args []string) error {
 		return convert.Cli(cfg, args)
@@ -375,33 +392,51 @@ func Start(cfg *config.Config) error {
 	return generateRootCmd(cfg).ParseAndRun(context.Background(), os.Args[1:])
 }
 
-func startServer(cfg *config.Config) {
+func startServer(cfg *config.Config) error {
+	// new a storage with configuration
 	s, err := storage.New(cfg)
-	atexit.Register(func() { s.Close() })
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("new storage: %v", err)
 	}
+	atexit.Register(func() { s.Close() })
+
+	// new a direct upstream
 	u := direct.New(cfg, s)
-	go agent.SelfProfile(cfg, u, "pyroscope.server", logrus.StandardLogger())
+
+	// uploading the server profile self
+	if err := agent.SelfProfile(cfg, u, "pyroscope.server", logrus.StandardLogger()); err != nil {
+		return fmt.Errorf("start self profile: %v", err)
+	}
+
+	// debuging the RAM and disk usages
 	go printRAMUsage()
 	go printDiskUsage(cfg)
-	c := server.New(cfg, s)
+
+	// new server
+	c, err := server.New(cfg, s)
+	if err != nil {
+		return fmt.Errorf("new server: %v", err)
+	}
 	atexit.Register(func() { c.Stop() })
+
+	// start the analytics
 	if !cfg.Server.AnalyticsOptOut {
 		analyticsService := analytics.NewService(cfg, s, c)
 		go analyticsService.Start()
 		atexit.Register(func() { analyticsService.Stop() })
 	}
+
 	// if you ever change this line, make sure to update this homebrew test:
-	//   https://github.com/pyroscope-io/homebrew-brew/blob/main/Formula/pyroscope.rb#L94
+	// - https://github.com/pyroscope-io/homebrew-brew/blob/main/Formula/pyroscope.rb#L94
 	logrus.Info("starting HTTP server")
-	c.Start()
+
+	// start the server
+	return c.Start()
 }
 
 func printRAMUsage() {
 	t := time.NewTicker(30 * time.Second)
-	for {
-		<-t.C
+	for range t.C {
 		if logrus.IsLevelEnabled(logrus.DebugLevel) {
 			debug.PrintMemUsage()
 		}
@@ -410,8 +445,7 @@ func printRAMUsage() {
 
 func printDiskUsage(cfg *config.Config) {
 	t := time.NewTicker(30 * time.Second)
-	for {
-		<-t.C
+	for range t.C {
 		if logrus.IsLevelEnabled(logrus.DebugLevel) {
 			debug.PrintDiskUsage(cfg.Server.StoragePath)
 		}

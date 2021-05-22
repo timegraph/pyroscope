@@ -21,15 +21,17 @@ type Direct struct {
 }
 
 func New(cfg *config.Config, s *storage.Storage) *Direct {
-	d := &Direct{
+	direct := &Direct{
 		cfg:  cfg,
 		s:    s,
 		todo: make(chan *upstream.UploadJob, 100),
 		done: make(chan struct{}, upstreamThreads),
 	}
 
-	go d.start()
-	return d
+	// start the upstream
+	go direct.start()
+
+	return direct
 }
 
 func (u *Direct) start() {

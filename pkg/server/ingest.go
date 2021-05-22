@@ -22,16 +22,19 @@ type ingestParams struct {
 	units           string
 	aggregationType string
 	modifiers       []string
-	from            time.Time
-	until           time.Time
+	startTime       time.Time
+	endTime         time.Time
 }
 
 func wrapConvertFunction(convertFunc func(r io.Reader, cb func(name []byte, val int)) error) func(io.Reader) (*tree.Tree, error) {
 	return func(r io.Reader) (*tree.Tree, error) {
 		t := tree.New()
-		convertFunc(r, func(k []byte, v int) {
+
+		if err := convertFunc(r, func(k []byte, v int) {
 			t.Insert(k, uint64(v))
-		})
+		}); err != nil {
+			return nil, err
+		}
 
 		return t, nil
 	}
@@ -42,7 +45,6 @@ func ingestParamsFromRequest(r *http.Request) *ingestParams {
 	q := r.URL.Query()
 
 	format := q.Get("format")
-
 	if format == "tree" || r.Header.Get("Content-Type") == "binary/octet-stream+tree" {
 		ip.parserFunc = tree.DeserializeNoDict
 	} else if format == "trie" || r.Header.Get("Content-Type") == "binary/octet-stream+trie" {
@@ -53,16 +55,16 @@ func ingestParamsFromRequest(r *http.Request) *ingestParams {
 		ip.parserFunc = wrapConvertFunction(convert.ParseGroups)
 	}
 
-	if qt := q.Get("from"); qt != "" {
-		ip.from = attime.Parse(qt)
+	if qt := q.Get("startTime"); qt != "" {
+		ip.startTime = attime.Parse(qt)
 	} else {
-		ip.from = time.Now()
+		ip.startTime = time.Now()
 	}
 
-	if qt := q.Get("until"); qt != "" {
-		ip.until = attime.Parse(qt)
+	if qt := q.Get("endTime"); qt != "" {
+		ip.endTime = attime.Parse(qt)
 	} else {
-		ip.until = time.Now()
+		ip.endTime = time.Now()
 	}
 
 	if sr := q.Get("sampleRate"); sr != "" {
@@ -78,7 +80,6 @@ func ingestParamsFromRequest(r *http.Request) *ingestParams {
 	}
 
 	if sn := q.Get("spyName"); sn != "" {
-		// TODO: error handling
 		ip.spyName = sn
 	} else {
 		ip.spyName = "unknown"
@@ -116,8 +117,8 @@ func (ctrl *Controller) ingestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = ctrl.s.Put(&storage.PutInput{
-		StartTime:       ip.from,
-		EndTime:         ip.until,
+		StartTime:       ip.startTime,
+		EndTime:         ip.endTime,
 		Key:             ip.storageKey,
 		Val:             t,
 		SpyName:         ip.spyName,

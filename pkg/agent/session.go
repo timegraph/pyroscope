@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"sync"
 	"time"
 
 	// revive:disable:blank-imports Depending on configuration these packages may or may not be used.
@@ -33,8 +32,7 @@ type ProfileSession struct {
 	uploadRate time.Duration
 	pids       []int
 	spies      []spy.Spy
-	stopCh     chan struct{}
-	trieMutex  sync.Mutex
+	done       chan struct{}
 
 	previousTries []*transporttrie.Trie
 	tries         []*transporttrie.Trie
@@ -61,7 +59,7 @@ type SessionConfig struct {
 	WithSubprocesses bool
 }
 
-func NewSession(c *SessionConfig) *ProfileSession {
+func NewSession(c *SessionConfig, logger Logger) *ProfileSession {
 	ps := &ProfileSession{
 		upstream:         c.Upstream,
 		appName:          c.AppName,
@@ -71,8 +69,9 @@ func NewSession(c *SessionConfig) *ProfileSession {
 		sampleRate:       c.SampleRate,
 		uploadRate:       c.UploadRate,
 		pids:             []int{c.Pid},
-		stopCh:           make(chan struct{}),
+		done:             make(chan struct{}),
 		withSubprocesses: c.WithSubprocesses,
+		Logger:           logger,
 	}
 
 	if ps.spyName == types.GoSpy {
@@ -108,9 +107,6 @@ func (ps *ProfileSession) takeSnapshots() {
 						return
 					}
 					if len(stack) > 0 {
-						ps.trieMutex.Lock()
-						defer ps.trieMutex.Unlock()
-
 						if ps.spyName == types.GoSpy {
 							ps.tries[i].Insert(stack, v, true)
 						} else {
@@ -125,7 +121,7 @@ func (ps *ProfileSession) takeSnapshots() {
 				ps.reset()
 			}
 
-		case <-ps.stopCh:
+		case <-ps.done:
 			ticker.Stop()
 			// stop the spies
 			for _, spy := range ps.spies {
@@ -145,7 +141,6 @@ func (ps *ProfileSession) Start() error {
 			if err != nil {
 				return err
 			}
-
 			ps.spies = append(ps.spies, s)
 		}
 	} else {
@@ -153,7 +148,6 @@ func (ps *ProfileSession) Start() error {
 		if err != nil {
 			return err
 		}
-
 		ps.spies = append(ps.spies, s)
 	}
 
@@ -173,9 +167,6 @@ func (ps *ProfileSession) isDueForReset() bool {
 // the difference between stop and reset is that reset stops current session
 // and then instantly starts a new one
 func (ps *ProfileSession) reset() {
-	ps.trieMutex.Lock()
-	defer ps.trieMutex.Unlock()
-
 	now := time.Now()
 	// upload the read data to server
 	ps.uploadTries(now)
@@ -189,15 +180,13 @@ func (ps *ProfileSession) reset() {
 }
 
 func (ps *ProfileSession) Stop() {
-	ps.trieMutex.Lock()
-	defer ps.trieMutex.Unlock()
-
 	ps.stopTime = time.Now()
+
 	select {
-	case ps.stopCh <- struct{}{}:
+	case ps.done <- struct{}{}:
 	default:
 	}
-	close(ps.stopCh)
+	close(ps.done)
 
 	// before stopping, upload the tries
 	ps.uploadTries(time.Now())
@@ -226,6 +215,8 @@ func (ps *ProfileSession) uploadTries(now time.Time) {
 
 			if !skipUpload {
 				name := ps.appName + "." + string(ps.profileTypes[i])
+
+				// upload the profile trie to server
 				ps.upstream.Upload(&upstream.UploadJob{
 					Name:            name,
 					StartTime:       ps.startTime,

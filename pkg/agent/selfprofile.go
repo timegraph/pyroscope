@@ -7,10 +7,11 @@ import (
 	"github.com/pyroscope-io/pyroscope/pkg/agent/upstream"
 	"github.com/pyroscope-io/pyroscope/pkg/config"
 	"github.com/pyroscope-io/pyroscope/pkg/util/atexit"
+	"github.com/sirupsen/logrus"
 )
 
 func SelfProfile(cfg *config.Config, u upstream.Upstream, appName string, logger Logger) error {
-	c := SessionConfig{
+	sc := SessionConfig{
 		Upstream:         u,
 		AppName:          appName,
 		ProfilingTypes:   types.DefaultProfileTypes,
@@ -20,12 +21,11 @@ func SelfProfile(cfg *config.Config, u upstream.Upstream, appName string, logger
 		Pid:              0,
 		WithSubprocesses: false,
 	}
-	s := NewSession(&c)
-	if err := s.Start(); err != nil {
+	session := NewSession(&sc, logrus.New())
+	if err := session.Start(); err != nil {
 		return err
 	}
-	s.Logger = logger
 
-	atexit.Register(s.Stop)
+	atexit.Register(session.Stop)
 	return nil
 }

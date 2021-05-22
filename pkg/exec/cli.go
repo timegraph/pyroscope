@@ -64,7 +64,7 @@ func Cli(cfg *config.Config, args []string) error {
 			supportedSpies := spy.SupportedExecSpies()
 			suggestedCommand := fmt.Sprintf("pyroscope connect -spy-name %s %s", supportedSpies[0], strings.Join(args, " "))
 			return fmt.Errorf(
-				"Pass spy name via %s argument, for example: \n  %s\n\nAvailable spies are: %s\nIf you believe this is a mistake, please submit an issue at %s",
+				"pass spy name via %s argument, for example: \n  %s\n\nAvailable spies are: %s\nIf you believe this is a mistake, please submit an issue at %s",
 				color.YellowString("-spy-name"),
 				color.YellowString(suggestedCommand),
 				strings.Join(supportedSpies, ","),
@@ -98,11 +98,11 @@ func Cli(cfg *config.Config, args []string) error {
 		cmd.Stdin = os.Stdin
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 
-		// permissions drop
+		// drop permissions
 		if isRoot() && !cfg.Exec.NoRootDrop && os.Getenv("SUDO_UID") != "" && os.Getenv("SUDO_GID") != "" {
 			creds, err := generateCredentialsDrop()
 			if err != nil {
-				logrus.Errorf("failed to drop permissions, %q", err)
+				logrus.Errorf("failed to drop credentials: %v", err)
 			} else {
 				cmd.SysProcAttr.Credential = creds
 			}
@@ -111,7 +111,7 @@ func Cli(cfg *config.Config, args []string) error {
 		if cfg.Exec.UserName != "" || cfg.Exec.GroupName != "" {
 			creds, err := generateCredentials(cfg.Exec.UserName, cfg.Exec.GroupName)
 			if err != nil {
-				logrus.Errorf("failed to generate credentials: %q", err)
+				logrus.Errorf("failed to generate credentials: %v", err)
 			} else {
 				cmd.SysProcAttr.Credential = creds
 			}
@@ -120,21 +120,21 @@ func Cli(cfg *config.Config, args []string) error {
 		cmd.SysProcAttr.Setpgid = true
 		err := cmd.Start()
 		if err != nil {
-			return err
+			return fmt.Errorf("start command: %v", err)
 		}
 		pid = cmd.Process.Pid
 	}
 
-	u, err := remote.New(remote.RemoteConfig{
+	rc := remote.RemoteConfig{
 		AuthToken:              cfg.Exec.AuthToken,
 		UpstreamAddress:        cfg.Exec.ServerAddress,
 		UpstreamThreads:        cfg.Exec.UpstreamThreads,
 		UpstreamRequestTimeout: cfg.Exec.UpstreamRequestTimeout,
-	})
-	if err != nil {
-		return err
 	}
-	u.Logger = logrus.StandardLogger()
+	u, err := remote.New(rc, logrus.StandardLogger())
+	if err != nil {
+		return fmt.Errorf("new remote upstream: %v", err)
+	}
 	defer u.Stop()
 
 	logrus.WithFields(logrus.Fields{
@@ -149,7 +149,7 @@ func Cli(cfg *config.Config, args []string) error {
 		cfg.Exec.SampleRate = types.DefaultSampleRate
 	}
 
-	sess := agent.NewSession(&agent.SessionConfig{
+	sc := agent.SessionConfig{
 		Upstream:         u,
 		AppName:          cfg.Exec.ApplicationName,
 		ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU},
@@ -158,20 +158,19 @@ func Cli(cfg *config.Config, args []string) error {
 		UploadRate:       10 * time.Second,
 		Pid:              pid,
 		WithSubprocesses: cfg.Exec.DetectSubprocesses,
-	})
-
-	sess.Logger = logrus.StandardLogger()
-	err = sess.Start()
-	if err != nil {
-		logrus.Errorf("error when starting session: %q", err)
 	}
-	defer sess.Stop()
+	session := agent.NewSession(&sc, logrus.StandardLogger())
+	if err := session.Start(); err != nil {
+		return fmt.Errorf("start session: %v", err)
+	}
+	defer session.Stop()
 
 	if isExec {
 		waitForSpawnedProcessToExit(cmd)
 	} else {
 		waitForProcessToExit(pid)
 	}
+
 	return nil
 }
 
