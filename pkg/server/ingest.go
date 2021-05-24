@@ -112,11 +112,11 @@ func (ctrl *Controller) ingestHandler(w http.ResponseWriter, r *http.Request) {
 	var t *tree.Tree
 	t, err := ip.parserFunc(r.Body)
 	if err != nil {
-		logrus.WithField("err", err).Error("error happened while parsing data")
+		logrus.Errorf("parsing data: %v", err)
 		return
 	}
 
-	err = ctrl.s.Put(&storage.PutInput{
+	if err := ctrl.s.Put(&storage.PutInput{
 		StartTime:       ip.startTime,
 		EndTime:         ip.endTime,
 		Key:             ip.storageKey,
@@ -125,14 +125,15 @@ func (ctrl *Controller) ingestHandler(w http.ResponseWriter, r *http.Request) {
 		SampleRate:      ip.sampleRate,
 		Units:           ip.units,
 		AggregationType: ip.aggregationType,
-	})
-	if err != nil {
-		logrus.WithField("err", err).Error("error happened while inserting data")
+	}); err != nil {
+		logrus.Errorf("inserting data to storage: %v", err)
 		return
 	}
+
 	ctrl.statsInc("ingest")
 	ctrl.statsInc("ingest:" + ip.spyName)
 	k := *ip.storageKey
 	ctrl.appStats.Add(hashString(k.AppName()))
+
 	w.WriteHeader(200)
 }

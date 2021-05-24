@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -46,7 +47,10 @@ func New(cfg *config.Config, s *storage.Storage) (*Controller, error) {
 
 func (ctrl *Controller) Stop() error {
 	if ctrl.httpServer != nil {
-		return ctrl.httpServer.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		// shutdown the server gracefully
+		return ctrl.httpServer.Shutdown(ctx)
 	}
 	return nil
 }
