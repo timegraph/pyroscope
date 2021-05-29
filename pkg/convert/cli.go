@@ -22,15 +22,15 @@ func Cli(cfg *config.Convert, logger func(string), args []string) error {
 	switch cfg.Format {
 	case "tree":
 		t := tree.New()
-		parser(input, func(name []byte, val int) {
-			t.Insert(name, uint64(val))
+		parser(input, func(name []byte, val uint64) {
+			t.Insert(name, val)
 		})
 
 		t.SerializeNoDict(4096, os.Stdout)
 	case "trie":
 		t := transporttrie.New()
-		parser(input, func(name []byte, val int) {
-			t.Insert(name, uint64(val), true)
+		parser(input, func(name []byte, val uint64) {
+			t.Insert(name, val, true)
 		})
 
 		t.Serialize(os.Stdout)

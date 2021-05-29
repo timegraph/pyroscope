@@ -12,13 +12,13 @@ import (
 )
 
 // format is a Serialized trie (see transporttrie.Serialize implementation)
-func ParseTrie(r io.Reader, cb func(name []byte, val int)) error {
+func ParseTrie(r io.Reader, cb func(name []byte, val uint64)) error {
 	trie, err := transporttrie.Deserialize(r)
 	if err != nil {
 		return err
 	}
 	trie.Iterate(func(name []byte, val uint64) {
-		cb(name, int(val))
+		cb(name, val)
 	})
 	return nil
 }
@@ -39,7 +39,7 @@ func ParsePprof(r io.Reader) (*Profile, error) {
 // format:
 // stack-trace-foo 1
 // stack-trace-bar 2
-func ParseGroups(r io.Reader, cb func(name []byte, val int)) error {
+func ParseGroups(r io.Reader, cb func(name []byte, val uint64)) error {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		if err := scanner.Err(); err != nil {
@@ -61,7 +61,7 @@ func ParseGroups(r io.Reader, cb func(name []byte, val int)) error {
 		if err != nil {
 			return err
 		}
-		cb(stacktrace, i)
+		cb(stacktrace, uint64(i))
 	}
 	return nil
 }
@@ -70,8 +70,8 @@ func ParseGroups(r io.Reader, cb func(name []byte, val int)) error {
 // stack-trace-foo
 // stack-trace-bar
 // stack-trace-bar
-func ParseIndividualLines(r io.Reader, cb func(name []byte, val int)) error {
-	groups := make(map[string]int)
+func ParseIndividualLines(r io.Reader, cb func(name []byte, val uint64)) error {
+	groups := make(map[string]uint64)
 	scanner := bufio.NewScanner(r)
 	// scanner.Buffer(make([]byte, bufio.MaxScanTokenSize*100), bufio.MaxScanTokenSize*100)
 	// scanner.Split(bufio.ScanLines)

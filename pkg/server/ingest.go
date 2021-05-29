@@ -26,11 +26,11 @@ type ingestParams struct {
 	until           time.Time
 }
 
-func wrapConvertFunction(convertFunc func(r io.Reader, cb func(name []byte, val int)) error) func(io.Reader) (*tree.Tree, error) {
+func wrapConvertFunction(convertFunc func(r io.Reader, cb func(name []byte, val uint64)) error) func(io.Reader) (*tree.Tree, error) {
 	return func(r io.Reader) (*tree.Tree, error) {
 		t := tree.New()
-		if err := convertFunc(r, func(k []byte, v int) {
-			t.Insert(k, uint64(v))
+		if err := convertFunc(r, func(k []byte, v uint64) {
+			t.Insert(k, v)
 		}); err != nil {
 			return nil, err
 		}
