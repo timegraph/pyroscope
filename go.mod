@@ -5,12 +5,14 @@ go 1.14
 require (
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aybabtme/rgbterm v0.0.0-20170906152045-cc83f3b3ce59
+	github.com/bluele/gcache v0.0.2
 	github.com/cheggaaa/pb/v3 v3.0.5
 	github.com/clarkduvall/hyperloglog v0.0.0-20171127014514-a0107a5d8004
 	github.com/cosmtrek/air v1.12.2
 	github.com/creack/pty v1.1.11 // indirect
 	github.com/davecgh/go-spew v1.1.1
 	github.com/dgraph-io/badger/v2 v2.2007.2
+	github.com/dgraph-io/ristretto v0.0.3-0.20200630154024-f66de99634de
 	github.com/dgrijalva/lfu-go v0.0.0-20141010002404-f174e76c5138
 	github.com/fatih/color v1.10.0
 	github.com/felixge/fgprof v0.9.1
@@ -39,6 +41,7 @@ require (
 	github.com/pyroscope-io/dotnetdiag v1.1.0
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/sirupsen/logrus v1.7.0
+	github.com/stretchr/testify v1.5.1
 	github.com/twmb/murmur3 v1.1.5
 	github.com/wacul/ptr v1.0.0 // indirect
 	golang.org/x/tools v0.1.0
