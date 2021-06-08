@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/pyroscope-io/pyroscope/pkg/util/disk"
+	"github.com/pyroscope-io/pyroscope/pkg/util/timer"
 
 	"github.com/dgraph-io/badger/v2"
 	"github.com/dgraph-io/badger/v2/options"
 	"github.com/pyroscope-io/pyroscope/pkg/config"
-	"github.com/pyroscope-io/pyroscope/pkg/storage/cache"
-	"github.com/pyroscope-io/pyroscope/pkg/storage/dict"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/dimension"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/labels"
+	"github.com/pyroscope-io/pyroscope/pkg/storage/pcache"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/segment"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/tree"
 	"github.com/pyroscope-io/pyroscope/pkg/structs/merge"
@@ -31,42 +31,33 @@ var errClosing = errors.New("the db is in closing state")
 var errOutOfSpace = errors.New("running out of space")
 
 type Storage struct {
-	closingMutex sync.RWMutex
-	closing      bool
+	// closingMutex sync.RWMutex
+	// closing      bool
 
-	cfg      *config.Server
-	segments *cache.Cache
+	cfg *config.Server
+	// segments *cache.Cache
 
-	dimensions *cache.Cache
-	dicts      *cache.Cache
-	trees      *cache.Cache
-	labels     *labels.Labels
+	// dimensions *cache.Cache
+	// dicts      *cache.Cache
+	// trees      *cache.Cache
+	labels *labels.Labels
 
-	db           *badger.DB
-	dbTrees      *badger.DB
-	dbDicts      *badger.DB
-	dbDimensions *badger.DB
-	dbSegments   *badger.DB
-}
-
-func badgerGC(db *badger.DB) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-	again:
-		err := db.RunValueLogGC(0.7)
-		if err == nil {
-			goto again
-		}
-	}
+	db *badger.DB
+	cs *pcache.Service
+	// dbTrees      *badger.DB
+	// dbDicts      *badger.DB
+	// dbDimensions *badger.DB
+	// dbSegments   *badger.DB
 }
 
 func newBadger(cfg *config.Server, name string) (*badger.DB, error) {
+	// mkdir the badger path
 	badgerPath := filepath.Join(cfg.StoragePath, name)
 	err := os.MkdirAll(badgerPath, 0o755)
 	if err != nil {
 		return nil, err
 	}
+	// init the badger options
 	badgerOptions := badger.DefaultOptions(badgerPath)
 	badgerOptions = badgerOptions.WithTruncate(!cfg.BadgerNoTruncate)
 	badgerOptions = badgerOptions.WithSyncWrites(false)
@@ -77,106 +68,119 @@ func newBadger(cfg *config.Server, name string) (*badger.DB, error) {
 	}
 	badgerOptions = badgerOptions.WithLogger(badgerLogger{name: name, logLevel: badgerLevel})
 
+	// open the badger
 	db, err := badger.Open(badgerOptions)
-	if err == nil {
-		go badgerGC(db)
+	if err != nil {
+		return nil, err
 	}
+	// start the badger GC
+	timer.StartWorker("badger gc", make(chan struct{}), 5*time.Minute, func() error {
+		return db.RunValueLogGC(0.7)
+	})
+
 	return db, err
 }
 
-func New(cfg *config.Server) (*Storage, error) { // TODO: cfg.Server?
-	db, err := newBadger(cfg, "main")
+func New(cfg *config.Server) (*Storage, error) {
+	// new a badger for storage
+	db, err := newBadger(cfg, "pyroscope")
 	if err != nil {
 		return nil, err
 	}
-	dbTrees, err := newBadger(cfg, "trees")
-	if err != nil {
-		return nil, err
-	}
-	dbDicts, err := newBadger(cfg, "dicts")
-	if err != nil {
-		return nil, err
-	}
-	dbDimensions, err := newBadger(cfg, "dimensions")
-	if err != nil {
-		return nil, err
-	}
-	dbSegments, err := newBadger(cfg, "segments")
-	if err != nil {
-		return nil, err
-	}
+	// dbTrees, err := newBadger(cfg, "trees")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// dbDicts, err := newBadger(cfg, "dicts")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// dbDimensions, err := newBadger(cfg, "dimensions")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// dbSegments, err := newBadger(cfg, "segments")
+	// if err != nil {
+	// 	return nil, err
+	// }
 
+	// new a cache for storage
+	cs, err := pcache.NewService(db, pcache.LRU, 1024*1024)
+	if err != nil {
+		return nil, err
+	}
 	s := &Storage{
-		cfg:          cfg,
-		labels:       labels.New(db),
-		db:           db,
-		dbTrees:      dbTrees,
-		dbDicts:      dbDicts,
-		dbDimensions: dbDimensions,
-		dbSegments:   dbSegments,
+		cfg:    cfg,
+		labels: labels.New(db),
+		db:     db,
+		cs:     cs,
+		// dbTrees:      dbTrees,
+		// dbDicts:      dbDicts,
+		// dbDimensions: dbDimensions,
+		// dbSegments:   dbSegments,
 	}
 
-	s.dimensions = cache.New(dbDimensions, cfg.CacheDimensionSize, "i:")
-	s.dimensions.Bytes = func(k string, v interface{}) ([]byte, error) {
-		return v.(*dimension.Dimension).Bytes()
-	}
-	s.dimensions.FromBytes = func(k string, v []byte) (interface{}, error) {
-		return dimension.FromBytes(v)
-	}
-	s.dimensions.New = func(k string) interface{} {
-		return dimension.New()
-	}
+	// s.dimensions = cache.New(dbDimensions, cfg.CacheDimensionSize, "i:")
+	// s.dimensions.Bytes = func(k string, v interface{}) ([]byte, error) {
+	// 	return v.(*dimension.Dimension).Bytes()
+	// }
+	// s.dimensions.FromBytes = func(k string, v []byte) (interface{}, error) {
+	// 	return dimension.FromBytes(v)
+	// }
+	// s.dimensions.New = func(k string) interface{} {
+	// 	return dimension.New()
+	// }
 
-	s.segments = cache.New(dbSegments, cfg.CacheSegmentSize, "s:")
-	s.segments.Bytes = func(k string, v interface{}) ([]byte, error) {
-		return v.(*segment.Segment).Bytes()
-	}
-	s.segments.FromBytes = func(k string, v []byte) (interface{}, error) {
-		// TODO:
-		//   these configuration params should be saved in db when it initializes
-		return segment.FromBytes(v)
-	}
-	s.segments.New = func(k string) interface{} {
-		return segment.New()
-	}
+	// s.segments = cache.New(dbSegments, cfg.CacheSegmentSize, "s:")
+	// s.segments.Bytes = func(k string, v interface{}) ([]byte, error) {
+	// 	return v.(*segment.Segment).Bytes()
+	// }
+	// s.segments.FromBytes = func(k string, v []byte) (interface{}, error) {
+	// 	// TODO:
+	// 	//   these configuration params should be saved in db when it initializes
+	// 	return segment.FromBytes(v)
+	// }
+	// s.segments.New = func(k string) interface{} {
+	// 	return segment.New()
+	// }
 
-	s.dicts = cache.New(dbDicts, cfg.CacheDictionarySize, "d:")
-	s.dicts.Bytes = func(k string, v interface{}) ([]byte, error) {
-		return v.(*dict.Dict).Bytes()
-	}
-	s.dicts.FromBytes = func(k string, v []byte) (interface{}, error) {
-		return dict.FromBytes(v)
-	}
-	s.dicts.New = func(k string) interface{} {
-		return dict.New()
-	}
+	// s.dicts = cache.New(dbDicts, cfg.CacheDictionarySize, "d:")
+	// s.dicts.Bytes = func(k string, v interface{}) ([]byte, error) {
+	// 	return v.(*dict.Dict).Bytes()
+	// }
+	// s.dicts.FromBytes = func(k string, v []byte) (interface{}, error) {
+	// 	return dict.FromBytes(v)
+	// }
+	// s.dicts.New = func(k string) interface{} {
+	// 	return dict.New()
+	// }
 
-	s.trees = cache.New(dbTrees, cfg.CacheTreeSize, "t:")
-	s.trees.Bytes = func(k string, v interface{}) ([]byte, error) {
-		key := FromTreeToMainKey(k)
-		d, err := s.dicts.Get(key)
-		if err != nil {
-			return nil, fmt.Errorf("dicts cache for %v: %v", key, err)
-		}
-		if d == nil { // key not found
-			return nil, nil
-		}
-		return v.(*tree.Tree).Bytes(d.(*dict.Dict), cfg.MaxNodesSerialization)
-	}
-	s.trees.FromBytes = func(k string, v []byte) (interface{}, error) {
-		key := FromTreeToMainKey(k)
-		d, err := s.dicts.Get(FromTreeToMainKey(k))
-		if err != nil {
-			return nil, fmt.Errorf("dicts cache for %v: %v", key, err)
-		}
-		if d == nil { // key not found
-			return nil, nil
-		}
-		return tree.FromBytes(d.(*dict.Dict), v)
-	}
-	s.trees.New = func(k string) interface{} {
-		return tree.New()
-	}
+	// s.trees = cache.New(dbTrees, cfg.CacheTreeSize, "t:")
+	// s.trees.Bytes = func(k string, v interface{}) ([]byte, error) {
+	// 	key := FromTreeToMainKey(k)
+	// 	d, err := s.dicts.Get(key)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("dicts cache for %v: %v", key, err)
+	// 	}
+	// 	if d == nil { // key not found
+	// 		return nil, nil
+	// 	}
+	// 	return v.(*tree.Tree).Bytes(d.(*dict.Dict), cfg.MaxNodesSerialization)
+	// }
+	// s.trees.FromBytes = func(k string, v []byte) (interface{}, error) {
+	// 	key := FromTreeToMainKey(k)
+	// 	d, err := s.dicts.Get(FromTreeToMainKey(k))
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("dicts cache for %v: %v", key, err)
+	// 	}
+	// 	if d == nil { // key not found
+	// 		return nil, nil
+	// 	}
+	// 	return tree.FromBytes(d.(*dict.Dict), v)
+	// }
+	// s.trees.New = func(k string) interface{} {
+	// 	return tree.New()
+	// }
 
 	return s, nil
 }
@@ -193,14 +197,8 @@ type PutInput struct {
 }
 
 func (s *Storage) Put(po *PutInput) error {
-	s.closingMutex.RLock()
-	defer s.closingMutex.RUnlock()
-	if s.closing {
-		return errClosing
-	}
-
-	freeSpace, err := disk.FreeSpace(s.cfg.StoragePath)
-	if err == nil && freeSpace < s.cfg.OutOfSpaceThreshold {
+	freeSpace, _ := disk.FreeSpace(s.cfg.StoragePath)
+	if freeSpace < s.cfg.OutOfSpaceThreshold {
 		return errOutOfSpace
 	}
 
@@ -216,37 +214,53 @@ func (s *Storage) Put(po *PutInput) error {
 		s.labels.Put(k, v)
 	}
 
+	// get segement key
 	sk := po.Key.SegmentKey()
 	for k, v := range po.Key.labels {
 		key := k + ":" + v
-		res, err := s.dimensions.Get(key)
+		// get dimension from cache
+		val, err := s.cs.Get(key)
 		if err != nil {
-			logrus.Errorf("dimensions cache for %v: %v", key, err)
+			logrus.Errorf("retrieve %v from cache: %v", key, err)
 			continue
 		}
-		if res != nil {
-			res.(*dimension.Dimension).Insert([]byte(sk))
+		if val != nil {
+			dimesion, ok := val.(*dimension.Dimension)
+			if ok {
+				dimesion.Insert([]byte(sk))
+			}
 		}
 	}
 
-	res, err := s.segments.Get(sk)
+	// get segment from cache
+	val, err := s.cs.Get(sk)
 	if err != nil {
-		return fmt.Errorf("segments cache for %v: %v", sk, err)
+		return fmt.Errorf("retrieve %v from cache: %v", sk, err)
 	}
-	if res == nil {
-		return fmt.Errorf("segments cache for %v: not found", sk)
+	if val == nil {
+		return fmt.Errorf("retrieve %v from cache: not found", sk)
 	}
 
-	st := res.(*segment.Segment)
+	st, ok := val.(*segment.Segment)
+	if !ok {
+		return errors.New("not a segment object")
+	}
+	// set the metadata to segement
 	st.SetMetadata(po.SpyName, po.SampleRate, po.Units, po.AggregationType)
+
+	// the samples from segment
 	samples := po.Val.Samples()
 	st.Put(po.StartTime, po.EndTime, samples, func(depth int, t time.Time, r *big.Rat, addons []segment.Addon) {
 		tk := po.Key.TreeKey(depth, t)
 
-		res, err := s.trees.Get(tk)
+		// get tree from cache
+		val, err := s.cs.Get(tk)
 		if err != nil {
-			logrus.Errorf("trees cache for %v: %v", tk, err)
+			logrus.Errorf("retrieve %v from cache: %v", tk, err)
 			return
+		}
+		if val == nil {
+			logrus.Errorf("retrieve %v from cache: not found", sk)
 		}
 		cachedTree := res.(*tree.Tree)
 

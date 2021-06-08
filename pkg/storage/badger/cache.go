@@ -1,5 +1,6 @@
-package pcache
+package badger
 
+// Cache for the badger
 type Cache interface {
 	Get(key interface{}) (interface{}, error)
 	GetAll() ([]interface{}, []interface{})
