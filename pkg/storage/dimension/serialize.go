@@ -11,18 +11,18 @@ import (
 // serialization format version. it's not very useful right now, but it will be in the future
 const currentVersion = 1
 
-func (s *Dimension) Serialize(w io.Writer) error {
+func (d *Dimension) Serialize(w io.Writer) error {
 	varint.Write(w, currentVersion)
 
-	for _, k := range s.keys {
+	for _, k := range d.keys {
 		varint.Write(w, uint64(len(k)))
 		w.Write([]byte(k))
 	}
 	return nil
 }
 
-func Deserialize(r io.Reader) (*Dimension, error) {
-	s := New()
+func (d *Dimension) Deserialize(r io.Reader) (*Dimension, error) {
+	nd := New()
 
 	br := bufio.NewReader(r) // TODO if it's already a bytereader skip
 
@@ -46,20 +46,24 @@ func Deserialize(r io.Reader) (*Dimension, error) {
 			return nil, err
 		}
 
-		s.keys = append(s.keys, key(keyBuf))
+		nd.keys = append(nd.keys, key(keyBuf))
 	}
 
-	return s, nil
+	return nd, nil
 }
 
-func (t *Dimension) Bytes() ([]byte, error) {
+func (d *Dimension) New() interface{} {
+	return New()
+}
+
+func (d *Dimension) Bytes(_ string, _ interface{}) ([]byte, error) {
 	b := bytes.Buffer{}
-	if err := t.Serialize(&b); err != nil {
+	if err := d.Serialize(&b); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
 }
 
-func FromBytes(p []byte) (*Dimension, error) {
-	return Deserialize(bytes.NewReader(p))
+func (d *Dimension) FromBytes(_ string, p []byte) (interface{}, error) {
+	return d.Deserialize(bytes.NewReader(p))
 }

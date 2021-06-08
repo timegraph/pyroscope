@@ -36,7 +36,7 @@ var _ = Describe("stree", func() {
 			serialized := buf.Bytes()
 			log.Printf("%q", serialized)
 
-			s, err := Deserialize(bytes.NewReader(serialized))
+			s, err := New().Deserialize(bytes.NewReader(serialized))
 			Expect(err).ToNot(HaveOccurred())
 			var buf2 bytes.Buffer
 			s.Serialize(&buf2)
@@ -66,7 +66,7 @@ var _ = Describe("stree", func() {
 	Context("Deserialize", func() {
 		Context("v1", func() {
 			It("deserializes v1 data", func() {
-				s, err := Deserialize(bytes.NewReader([]byte(serializedExampleV1)))
+				s, err := New().Deserialize(bytes.NewReader([]byte(serializedExampleV1)))
 				Expect(err).ToNot(HaveOccurred())
 				Expect(s.root.children[0]).ToNot(BeNil())
 				Expect(s.root.children[1]).ToNot(BeNil())
@@ -76,7 +76,7 @@ var _ = Describe("stree", func() {
 		})
 		Context("v2", func() {
 			It("deserializes v2 data", func() {
-				s, err := Deserialize(bytes.NewReader([]byte(serializedExampleV2)))
+				s, err := New().Deserialize(bytes.NewReader([]byte(serializedExampleV2)))
 				Expect(err).ToNot(HaveOccurred())
 				Expect(s.root.children[0]).ToNot(BeNil())
 				Expect(s.root.children[1]).ToNot(BeNil())

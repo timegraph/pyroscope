@@ -4,26 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
-	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/pyroscope-io/pyroscope/pkg/util/disk"
-	"github.com/pyroscope-io/pyroscope/pkg/util/timer"
 
-	"github.com/dgraph-io/badger/v2"
-	"github.com/dgraph-io/badger/v2/options"
 	"github.com/pyroscope-io/pyroscope/pkg/config"
+	"github.com/pyroscope-io/pyroscope/pkg/storage/badger"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/dimension"
-	"github.com/pyroscope-io/pyroscope/pkg/storage/labels"
-	"github.com/pyroscope-io/pyroscope/pkg/storage/pcache"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/segment"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/tree"
 	"github.com/pyroscope-io/pyroscope/pkg/structs/merge"
-	"github.com/pyroscope-io/pyroscope/pkg/util/bytesize"
-	"github.com/pyroscope-io/pyroscope/pkg/util/slices"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,62 +22,17 @@ var errClosing = errors.New("the db is in closing state")
 var errOutOfSpace = errors.New("running out of space")
 
 type Storage struct {
-	// closingMutex sync.RWMutex
-	// closing      bool
-
-	cfg *config.Server
 	// segments *cache.Cache
-
 	// dimensions *cache.Cache
 	// dicts      *cache.Cache
 	// trees      *cache.Cache
-	labels *labels.Labels
+	// labels *labels.Labels -> to the cache
 
-	db *badger.DB
-	cs *pcache.Service
-	// dbTrees      *badger.DB
-	// dbDicts      *badger.DB
-	// dbDimensions *badger.DB
-	// dbSegments   *badger.DB
+	config  *config.Server
+	service *badger.Service
 }
 
-func newBadger(cfg *config.Server, name string) (*badger.DB, error) {
-	// mkdir the badger path
-	badgerPath := filepath.Join(cfg.StoragePath, name)
-	err := os.MkdirAll(badgerPath, 0o755)
-	if err != nil {
-		return nil, err
-	}
-	// init the badger options
-	badgerOptions := badger.DefaultOptions(badgerPath)
-	badgerOptions = badgerOptions.WithTruncate(!cfg.BadgerNoTruncate)
-	badgerOptions = badgerOptions.WithSyncWrites(false)
-	badgerOptions = badgerOptions.WithCompression(options.ZSTD)
-	badgerLevel := logrus.ErrorLevel
-	if l, err := logrus.ParseLevel(cfg.BadgerLogLevel); err == nil {
-		badgerLevel = l
-	}
-	badgerOptions = badgerOptions.WithLogger(badgerLogger{name: name, logLevel: badgerLevel})
-
-	// open the badger
-	db, err := badger.Open(badgerOptions)
-	if err != nil {
-		return nil, err
-	}
-	// start the badger GC
-	timer.StartWorker("badger gc", make(chan struct{}), 5*time.Minute, func() error {
-		return db.RunValueLogGC(0.7)
-	})
-
-	return db, err
-}
-
-func New(cfg *config.Server) (*Storage, error) {
-	// new a badger for storage
-	db, err := newBadger(cfg, "pyroscope")
-	if err != nil {
-		return nil, err
-	}
+func New(config *config.Server) (*Storage, error) {
 	// dbTrees, err := newBadger(cfg, "trees")
 	// if err != nil {
 	// 	return nil, err
@@ -104,16 +50,20 @@ func New(cfg *config.Server) (*Storage, error) {
 	// 	return nil, err
 	// }
 
-	// new a cache for storage
-	cs, err := pcache.NewService(db, pcache.LRU, 1024*1024)
+	// new a badger service with cache for storage
+	service, err := badger.NewService(&badger.Config{
+		Size:        1024 * 1024,
+		StoragePath: config.StoragePath,
+		NoTruncate:  config.BadgerNoTruncate,
+		LogLevel:    config.BadgerLogLevel,
+		Strategy:    badger.LFU,
+	})
 	if err != nil {
 		return nil, err
 	}
 	s := &Storage{
-		cfg:    cfg,
-		labels: labels.New(db),
-		db:     db,
-		cs:     cs,
+		config:  config,
+		service: service,
 		// dbTrees:      dbTrees,
 		// dbDicts:      dbDicts,
 		// dbDimensions: dbDimensions,
@@ -196,67 +146,73 @@ type PutInput struct {
 	AggregationType string
 }
 
-func (s *Storage) Put(po *PutInput) error {
-	freeSpace, _ := disk.FreeSpace(s.cfg.StoragePath)
-	if freeSpace < s.cfg.OutOfSpaceThreshold {
+func (s *Storage) Put(pi *PutInput) error {
+	// check if the disk size is out of space
+	freeSpace, _ := disk.FreeSpace(s.config.StoragePath)
+	if freeSpace < s.config.OutOfSpaceThreshold {
 		return errOutOfSpace
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"startTime":       po.StartTime.String(),
-		"endTime":         po.EndTime.String(),
-		"key":             po.Key.Normalized(),
-		"samples":         po.Val.Samples(),
-		"units":           po.Units,
-		"aggregationType": po.AggregationType,
+		"startTime":       pi.StartTime.String(),
+		"endTime":         pi.EndTime.String(),
+		"key":             pi.Key.Normalized(),
+		"samples":         pi.Val.Samples(),
+		"units":           pi.Units,
+		"aggregationType": pi.AggregationType,
 	}).Info("storage.Put")
-	for k, v := range po.Key.labels {
-		s.labels.Put(k, v)
+
+	// update the labels to badger
+	for k, v := range pi.Key.labels {
+		kk := "l:" + k
+		kv := "v:" + k + ":" + v
+		if err := s.service.Update(kk, []byte{}); err != nil {
+			return fmt.Errorf("update badger: %v", err)
+		}
+		if err := s.service.Update(kv, []byte{}); err != nil {
+			return fmt.Errorf("update badger: %v", err)
+		}
 	}
 
-	// get segement key
-	sk := po.Key.SegmentKey()
-	for k, v := range po.Key.labels {
+	// segement key
+	sk := pi.Key.SegmentKey()
+
+	// update the dimesion and sort the keys
+	for k, v := range pi.Key.labels {
 		key := k + ":" + v
-		// get dimension from cache
-		val, err := s.cs.Get(key)
+		// find dimension from cache or badger
+		val, err := s.service.Get(key, &dimension.Dimension{})
 		if err != nil {
-			logrus.Errorf("retrieve %v from cache: %v", key, err)
+			logrus.Errorf("find dimension %v: %v", key, err)
 			continue
 		}
-		if val != nil {
-			dimesion, ok := val.(*dimension.Dimension)
-			if ok {
-				dimesion.Insert([]byte(sk))
-			}
+		dimesion, ok := val.(*dimension.Dimension)
+		if ok {
+			dimesion.Insert([]byte(sk))
 		}
 	}
 
-	// get segment from cache
-	val, err := s.cs.Get(sk)
+	// find segment from cache or badger
+	val, err := s.service.Get(sk, &segment.Segment{})
 	if err != nil {
-		return fmt.Errorf("retrieve %v from cache: %v", sk, err)
+		return fmt.Errorf("find segment %v: %v", sk, err)
 	}
-	if val == nil {
-		return fmt.Errorf("retrieve %v from cache: not found", sk)
-	}
-
 	st, ok := val.(*segment.Segment)
 	if !ok {
-		return errors.New("not a segment object")
+		return errors.New("must be segment object")
 	}
 	// set the metadata to segement
-	st.SetMetadata(po.SpyName, po.SampleRate, po.Units, po.AggregationType)
+	st.SetMetadata(pi.SpyName, pi.SampleRate, pi.Units, pi.AggregationType)
 
 	// the samples from segment
-	samples := po.Val.Samples()
-	st.Put(po.StartTime, po.EndTime, samples, func(depth int, t time.Time, r *big.Rat, addons []segment.Addon) {
-		tk := po.Key.TreeKey(depth, t)
+	samples := pi.Val.Samples()
+	st.Put(pi.StartTime, pi.EndTime, samples, func(depth int, t time.Time, r *big.Rat, addons []segment.Addon) {
+		tk := pi.Key.TreeKey(depth, t)
 
 		// get tree from cache
-		val, err := s.cs.Get(tk)
+		val, err := s.service.Get(tk, &tree.Tree{})
 		if err != nil {
-			logrus.Errorf("retrieve %v from cache: %v", tk, err)
+			logrus.Errorf("find tree %v: %v", tk, err)
 			return
 		}
 		if val == nil {
@@ -264,9 +220,9 @@ func (s *Storage) Put(po *PutInput) error {
 		}
 		cachedTree := res.(*tree.Tree)
 
-		treeClone := po.Val.Clone(r)
+		treeClone := pi.Val.Clone(r)
 		for _, addon := range addons {
-			tk2 := po.Key.TreeKey(addon.Depth, addon.T)
+			tk2 := pi.Key.TreeKey(addon.Depth, addon.T)
 
 			res, err := s.trees.Get(tk2)
 			if err != nil {
@@ -285,7 +241,9 @@ func (s *Storage) Put(po *PutInput) error {
 			s.trees.Put(tk, treeClone)
 		}
 	})
-	s.segments.Put(string(sk), st)
+
+	// update the key and value to cache
+	s.service.Set(sk, st)
 
 	return nil
 }
@@ -459,71 +417,45 @@ func (s *Storage) Delete(di *DeleteInput) error {
 	return nil
 }
 
+// Close the storage
 func (s *Storage) Close() error {
-	s.closingMutex.Lock()
-	s.closing = true
-	s.closingMutex.Unlock()
-
-	wg := sync.WaitGroup{}
-	wg.Add(3)
-	go func() { s.dimensions.Flush(); wg.Done() }()
-	go func() { s.segments.Flush(); wg.Done() }()
-	go func() { s.trees.Flush(); wg.Done() }()
-	wg.Wait()
-	// dictionary has to flush last because trees write to dictionaries
-	s.dicts.Flush()
-	s.dbTrees.Close()
-	s.dbDicts.Close()
-	s.dbDimensions.Close()
-	s.dbSegments.Close()
-	return s.db.Close()
-}
-
-func (s *Storage) GetKeys(cb func(_k string) bool) {
-	s.labels.GetKeys(cb)
-}
-
-func (s *Storage) GetValues(key string, cb func(v string) bool) {
-	s.labels.GetValues(key, func(v string) bool {
-		if key != "__name__" || !slices.StringContains(s.cfg.HideApplications, v) {
-			return cb(v)
-		}
-		return true
-	})
-}
-
-func (s *Storage) DiskUsage() map[string]bytesize.ByteSize {
-	res := map[string]bytesize.ByteSize{
-		"main":       0,
-		"trees":      0,
-		"dicts":      0,
-		"dimensions": 0,
-		"segments":   0,
+	// wg := sync.WaitGroup{}
+	// wg.Add(3)
+	// go func() { s.dimensions.Flush(); wg.Done() }()
+	// go func() { s.segments.Flush(); wg.Done() }()
+	// go func() { s.trees.Flush(); wg.Done() }()
+	// wg.Wait()
+	// // dictionary has to flush last because trees write to dictionaries
+	// s.dicts.Flush()
+	// s.dbTrees.Close()
+	// s.dbDicts.Close()
+	// s.dbDimensions.Close()
+	// s.dbSegments.Close()
+	// return s.db.Close()
+	if s.service != nil {
+		s.service.Close()
 	}
-	for k := range res {
-		res[k] = dirSize(filepath.Join(s.cfg.StoragePath, k))
-	}
-	return res
+	return nil
 }
 
-func dirSize(path string) (result bytesize.ByteSize) {
-	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			result += bytesize.ByteSize(info.Size())
-		}
-		return nil
-	})
-	return
-}
+// func (s *Storage) GetKeys(cb func(_k string) bool) {
+// 	s.labels.GetKeys(cb)
+// }
 
-func (s *Storage) CacheStats() map[string]interface{} {
-	return map[string]interface{}{
-		"dimensions": s.dimensions.Size(),
-		"segments":   s.segments.Size(),
-		"dicts":      s.dicts.Size(),
-		"trees":      s.trees.Size(),
-	}
-}
+// func (s *Storage) GetValues(key string, cb func(v string) bool) {
+// 	s.labels.GetValues(key, func(v string) bool {
+// 		if key != "__name__" || !slices.StringContains(s.config.HideApplications, v) {
+// 			return cb(v)
+// 		}
+// 		return true
+// 	})
+// }
+
+// func (s *Storage) CacheStats() map[string]interface{} {
+// 	return map[string]interface{}{
+// 		"dimensions": s.dimensions.Size(),
+// 		"segments":   s.segments.Size(),
+// 		"dicts":      s.dicts.Size(),
+// 		"trees":      s.trees.Size(),
+// 	}
+// }

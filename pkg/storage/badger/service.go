@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -16,12 +17,16 @@ import (
 )
 
 const (
-	LRU = gcache.LRU
-	ARC = gcache.ARC
-	LFU = gcache.LFU
+	LRU = gcache.LRU // lru cache
+	ARC = gcache.ARC // arc cache
+	LFU = gcache.LFU // lfu cache
 
-	collectInterval = time.Second * 5
-	flushGoroutines = 4
+	// goroutines for flushing cache to badger
+	defaultFlushGoroutines = 4
+	// the interval time for collecting metrics
+	defaultUpdateInterval = time.Second * 5
+	// the badger name for files
+	defaultBadgerName = "badger"
 )
 
 var (
@@ -53,15 +58,26 @@ func init() {
 	prometheus.MustRegister(storageMissCount)
 }
 
+// Transformer for different types
+type Transformer interface {
+	// Bytes serializes objects before they go into storage
+	Bytes(k string, v interface{}) ([]byte, error)
+	// FromBytes deserializes object coming from storage
+	FromBytes(k string, v []byte) (interface{}, error)
+	// New creates a new object
+	New() interface{}
+}
+
 // Config for badger
 type Config struct {
 	StoragePath string // the storage path for badger
 	Size        int    // the cache size
 	Strategy    string // the cache strategy
 	NoTruncate  bool   // whether value log files should be truncated to delete corrupt data
+	LogLevel    string // the log level for badger
 }
 
-// Cache service
+// Service for badger with cache
 type Service struct {
 	config *Config       // the settings for badger
 	cache  Cache         // the cache for badger
@@ -69,23 +85,23 @@ type Service struct {
 	done   chan struct{} // the service is done
 }
 
-func newBadger(config *Config, name string) (*badger.DB, error) {
+func (s *Service) newBadger(config *Config) (*badger.DB, error) {
 	// mkdir the badger path
-	badgerPath := filepath.Join(cfg.StoragePath, name)
+	badgerPath := filepath.Join(config.StoragePath, defaultBadgerName)
 	err := os.MkdirAll(badgerPath, 0o755)
 	if err != nil {
 		return nil, err
 	}
 	// init the badger options
 	badgerOptions := badger.DefaultOptions(badgerPath)
-	badgerOptions = badgerOptions.WithTruncate(!cfg.BadgerNoTruncate)
+	badgerOptions = badgerOptions.WithTruncate(!config.NoTruncate)
 	badgerOptions = badgerOptions.WithSyncWrites(false)
 	badgerOptions = badgerOptions.WithCompression(options.ZSTD)
 	badgerLevel := logrus.ErrorLevel
-	if l, err := logrus.ParseLevel(cfg.BadgerLogLevel); err == nil {
+	if l, err := logrus.ParseLevel(config.LogLevel); err == nil {
 		badgerLevel = l
 	}
-	badgerOptions = badgerOptions.WithLogger(badgerLogger{name: name, logLevel: badgerLevel})
+	badgerOptions = badgerOptions.WithLogger(Logger{name: defaultBadgerName, logLevel: badgerLevel})
 
 	// open the badger
 	db, err := badger.Open(badgerOptions)
@@ -93,7 +109,7 @@ func newBadger(config *Config, name string) (*badger.DB, error) {
 		return nil, err
 	}
 	// start the badger GC
-	timer.StartWorker("badger gc", make(chan struct{}), 5*time.Minute, func() error {
+	timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
 		return db.RunValueLogGC(0.7)
 	})
 
@@ -108,10 +124,17 @@ func NewService(config *Config) (*Service, error) {
 		done:   make(chan struct{}),
 	}
 
-	// init a special cache
+	// new a badger
+	db, err := s.newBadger(config)
+	if err != nil {
+		return nil, err
+	}
+	s.db = db
+
+	// new a cache
 	cache, err := gcache.New(
-		gcache.WithSize(size),
-		gcache.WithStrategy(strategy),
+		gcache.WithSize(config.Size),
+		gcache.WithStrategy(config.Strategy),
 		gcache.WithEvictFunc(s.evictHandler),
 	)
 	if err != nil {
@@ -119,14 +142,14 @@ func NewService(config *Config) (*Service, error) {
 	}
 	s.cache = cache
 
-	// start a timer to collect the metrics periodly
-	s.collect(collectInterval)
+	// start a timer to update the metrics periodly
+	s.updateMetrics(defaultUpdateInterval)
 
 	return s, nil
 }
 
-// collect the metrics periodly
-func (s *Service) collect(interval time.Duration) {
+// update the metrics periodly
+func (s *Service) updateMetrics(interval time.Duration) {
 	go func() {
 		ticker := time.NewTimer(interval)
 		defer ticker.Stop()
@@ -148,84 +171,91 @@ func (s *Service) collect(interval time.Duration) {
 }
 
 // flush the cache items to badger
-// func (s *Service) flush(goroutines int) {
-// 	wb := s.db.NewWriteBatch()
-// 	defer wb.Cancel()
+func (s *Service) flush(goroutines int) {
+	wb := s.db.NewWriteBatch()
+	defer wb.Cancel()
 
-// 	// all the cache items
-// 	keys, values := s.cache.GetAll()
-// 	if len(keys) == 0 {
-// 		return
-// 	}
+	// all the cache items
+	keys, values := s.cache.GetAll()
+	if len(keys) == 0 {
+		return
+	}
 
-// 	var wg sync.WaitGroup
-// 	for i := 0; i < goroutines; i++ {
-// 		wg.Add(1)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
 
-// 		num := len(keys) / goroutines
+		num := len(keys) / goroutines
 
-// 		start, end := i*num, (i+1)*num
-// 		go func(l, r int) {
-// 			defer wg.Done()
+		start, end := i*num, (i+1)*num
+		go func(l, r int) {
+			defer wg.Done()
 
-// 			wb := s.db.NewWriteBatch()
-// 			defer wb.Cancel()
+			wb := s.db.NewWriteBatch()
+			defer wb.Cancel()
 
-// 			for i := l; i < r; i++ {
-// 				if err := wb.Set(keys[i].([]byte), values[i].([]byte)); err != nil {
-// 					logrus.Errorf("write batch set: %v", err)
-// 				}
-// 			}
-// 			wb.Flush()
-// 		}(start, end)
-// 	}
+			for i := l; i < r; i++ {
+				if err := wb.Set(keys[i].([]byte), values[i].([]byte)); err != nil {
+					logrus.Errorf("write batch set: %v", err)
+				}
+			}
+			wb.Flush()
+		}(start, end)
+	}
 
-// 	// wait until the goroutines are done
-// 	wg.Wait()
-// }
+	// wait until the goroutines are done
+	wg.Wait()
+}
 
-// Close the cache service
-// func (s *Service) Close() {
-// 	if s.done != nil {
-// 		close(s.done)
-// 	}
+// Close the badger service
+func (s *Service) Close() {
+	if s.done != nil {
+		close(s.done)
+	}
 
-// 	// flush the cache to badger
-// 	s.flush(flushGoroutines)
+	// flush the cache to badger
+	s.flush(defaultFlushGoroutines)
 
-// 	// close the badger
-// 	if err := s.db.Close(); err != nil {
-// 		logrus.Errorf("close badger: %v", err)
-// 	}
-// }
-
-// handle the evicted item from cache
-func (s *Service) evictHandler(key interface{}, value interface{}) {
-	if err := s.db.Update(func(txn *badger.Txn) error {
-		if err := txn.Set(key.([]byte), value.([]byte)); err != nil {
-			return fmt.Errorf("transaction set entry: %v", err)
-		}
-		return nil
-	}); err != nil {
-		logrus.Errorf("db update: %v", err)
+	// close the badger
+	if err := s.db.Close(); err != nil {
+		logrus.Errorf("close badger: %v", err)
 	}
 }
 
-// Get a key from cache
-func (s *Service) Get(key interface{}) (interface{}, error) {
+// handle the evicted item from cache
+func (s *Service) evictHandler(key interface{}, value interface{}) {
+	if err := s.doUpdate(key.(string), value); err != nil {
+		logrus.Errorf("do update: %v", err)
+	}
+}
+
+func (s *Service) doUpdate(key string, value interface{}) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		if err := txn.Set([]byte(key), value.([]byte)); err != nil {
+			return fmt.Errorf("set entry: %v", err)
+		}
+		return nil
+	})
+}
+
+// Get a key from cache or badger
+// 1. find dimension from cache
+// 2. find dimension from badger and update the cache
+// 3. if not found, create and update a new one to cache
+func (s *Service) Get(key string, transformer Transformer) (interface{}, error) {
 	// find the value from cache first
-	val, err := s.cache.Get(key)
+	value, err := s.cache.Get(key)
 	if err != nil {
 		return nil, err
 	}
-	if val != nil {
-		return val, nil
+	if value != nil {
+		return value, nil
 	}
 
 	var buf []byte
 	// read value from badger
 	if err := s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key.([]byte))
+		item, err := txn.Get([]byte(key))
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
 				return nil
@@ -243,19 +273,42 @@ func (s *Service) Get(key interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("badger view: %v", err)
 	}
 
-	// if not found from badger, new an object
+	// create the key and value to cache
 	if buf == nil {
-		storageMissCount.Add(1)
+		newValue := transformer.New()
+		// set the key and new value to cache
+		s.Set(key, newValue)
 
+		return newValue, nil
 	}
+	// update the key and value to cache
+	value, err = transformer.FromBytes(key, buf)
+	if err != nil {
+		return nil, fmt.Errorf("deserialize %v: %v", key, err)
+	}
+	// set the key and new value to cache
+	s.Set(key, value)
+
+	return value, nil
+}
+
+// Update a key and value to badger
+func (s *Service) Update(key string, value interface{}) error {
+	return s.doUpdate(key, value)
 }
 
 // Set a key and value to cache
-func (s *Service) Set(key interface{}, value interface{}) {
+func (s *Service) Set(key string, value interface{}) {
 	s.cache.Set(key, value)
 }
 
-// Del a key from cache
-func (s *Service) Del(key interface{}) bool {
-	return s.cache.Del(key)
+// Del a key from cache and badger
+func (s *Service) Del(key string) error {
+	// delete a key from cache
+	s.cache.Del(key)
+
+	// delete a key from badger
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete([]byte(key))
+	})
 }

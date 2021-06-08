@@ -9,9 +9,8 @@ import (
 type key []byte
 
 type Dimension struct {
-	m sync.RWMutex
-	// keys are sorted
-	keys []key
+	m    sync.RWMutex
+	keys []key // keys are sorted
 }
 
 func New() *Dimension {
@@ -28,7 +27,7 @@ func (d *Dimension) Insert(key key) {
 		return bytes.Compare(d.keys[i], key) >= 0
 	})
 
-	if i < len(d.keys) && bytes.Compare(d.keys[i], key) == 0 {
+	if i < len(d.keys) && bytes.Equal(d.keys[i], key) {
 		return
 	}
 

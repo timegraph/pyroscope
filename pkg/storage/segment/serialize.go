@@ -81,8 +81,8 @@ func (s *Segment) Serialize(w io.Writer) error {
 	return nil
 }
 
-func Deserialize(r io.Reader) (*Segment, error) {
-	s := New()
+func (s *Segment) Deserialize(r io.Reader) (*Segment, error) {
+	ns := New()
 	br := bufio.NewReader(r) // TODO if it's already a bytereader skip
 
 	// reads serialization format version, see comment at the top
@@ -95,7 +95,7 @@ func Deserialize(r io.Reader) (*Segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.populateFromMetadata(metadata)
+	ns.populateFromMetadata(metadata)
 
 	parents := []*streeNode{nil}
 	for len(parents) > 0 {
@@ -122,14 +122,14 @@ func Deserialize(r io.Reader) (*Segment, error) {
 		if err != nil {
 			return nil, err
 		}
-		node := newNode(time.Unix(int64(timeVal), 0), int(depth), s.multiplier)
+		node := newNode(time.Unix(int64(timeVal), 0), int(depth), ns.multiplier)
 		if presentVal == 1 {
 			node.present = true
 		}
 		node.samples = samplesVal
 		node.writes = writesVal
-		if s.root == nil {
-			s.root = node
+		if ns.root == nil {
+			ns.root = node
 		}
 
 		parent := parents[0]
@@ -149,17 +149,21 @@ func Deserialize(r io.Reader) (*Segment, error) {
 		parents = append(r, parents...)
 	}
 
-	return s, nil
+	return ns, nil
 }
 
-func (t *Segment) Bytes() ([]byte, error) {
+func (s *Segment) New() interface{} {
+	return New()
+}
+
+func (s *Segment) Bytes(_ string, _ interface{}) ([]byte, error) {
 	b := bytes.Buffer{}
-	if err := t.Serialize(&b); err != nil {
+	if err := s.Serialize(&b); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
 }
 
-func FromBytes(p []byte) (*Segment, error) {
-	return Deserialize(bytes.NewReader(p))
+func (s *Segment) FromBytes(_ string, p []byte) (interface{}, error) {
+	return s.Deserialize(bytes.NewReader(p))
 }

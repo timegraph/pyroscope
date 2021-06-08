@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"io"
+	"strings"
 
 	"github.com/pyroscope-io/pyroscope/pkg/storage/dict"
 	"github.com/pyroscope-io/pyroscope/pkg/util/varint"
@@ -220,6 +221,21 @@ func (t *Tree) Bytes(d *dict.Dict, maxNodes int) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func parseMainKey(k string) string {
+	i := strings.LastIndex(k, ":")
+	i = strings.LastIndex(k[:i-1], ":")
+	return k[:i]
+}
+
+func (t *Tree) Bytes1(k string, v interface{}) ([]byte, error) {
+	main := parseMainKey(k)
+
+}
+
 func FromBytes(d *dict.Dict, p []byte) (*Tree, error) {
 	return Deserialize(d, bytes.NewReader(p))
+}
+
+func (t *Tree) New() interface{} {
+	return New()
 }
