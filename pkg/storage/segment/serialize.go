@@ -81,7 +81,7 @@ func (s *Segment) Serialize(w io.Writer) error {
 	return nil
 }
 
-func (s *Segment) Deserialize(r io.Reader) (*Segment, error) {
+func deserialize(r io.Reader) (*Segment, error) {
 	ns := New()
 	br := bufio.NewReader(r) // TODO if it's already a bytereader skip
 
@@ -152,11 +152,7 @@ func (s *Segment) Deserialize(r io.Reader) (*Segment, error) {
 	return ns, nil
 }
 
-func (s *Segment) New() interface{} {
-	return New()
-}
-
-func (s *Segment) Bytes(_ string, _ interface{}) ([]byte, error) {
+func (s *Segment) Bytes() ([]byte, error) {
 	b := bytes.Buffer{}
 	if err := s.Serialize(&b); err != nil {
 		return nil, err
@@ -164,6 +160,6 @@ func (s *Segment) Bytes(_ string, _ interface{}) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (s *Segment) FromBytes(_ string, p []byte) (interface{}, error) {
-	return s.Deserialize(bytes.NewReader(p))
+func FromBytes(p []byte) (*Segment, error) {
+	return deserialize(bytes.NewReader(p))
 }

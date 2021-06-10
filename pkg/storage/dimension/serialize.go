@@ -21,7 +21,8 @@ func (d *Dimension) Serialize(w io.Writer) error {
 	return nil
 }
 
-func (d *Dimension) Deserialize(r io.Reader) (*Dimension, error) {
+// deserialize the bytes to Dimension
+func deserialize(r io.Reader) (*Dimension, error) {
 	nd := New()
 
 	br := bufio.NewReader(r) // TODO if it's already a bytereader skip
@@ -52,11 +53,7 @@ func (d *Dimension) Deserialize(r io.Reader) (*Dimension, error) {
 	return nd, nil
 }
 
-func (d *Dimension) New() interface{} {
-	return New()
-}
-
-func (d *Dimension) Bytes(_ string, _ interface{}) ([]byte, error) {
+func (d *Dimension) Bytes() ([]byte, error) {
 	b := bytes.Buffer{}
 	if err := d.Serialize(&b); err != nil {
 		return nil, err
@@ -64,6 +61,6 @@ func (d *Dimension) Bytes(_ string, _ interface{}) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (d *Dimension) FromBytes(_ string, p []byte) (interface{}, error) {
-	return d.Deserialize(bytes.NewReader(p))
+func FromBytes(p []byte) (*Dimension, error) {
+	return deserialize(bytes.NewReader(p))
 }

@@ -58,16 +58,6 @@ func init() {
 	prometheus.MustRegister(storageMissCount)
 }
 
-// Transformer for different types
-type Transformer interface {
-	// Bytes serializes objects before they go into storage
-	Bytes(k string, v interface{}) ([]byte, error)
-	// FromBytes deserializes object coming from storage
-	FromBytes(k string, v []byte) (interface{}, error)
-	// New creates a new object
-	New() interface{}
-}
-
 // Config for badger
 type Config struct {
 	StoragePath string // the storage path for badger
@@ -239,11 +229,8 @@ func (s *Service) doUpdate(key string, value interface{}) error {
 }
 
 // Get a key from cache or badger
-// 1. find dimension from cache
-// 2. find dimension from badger and update the cache
-// 3. if not found, create and update a new one to cache
-func (s *Service) Get(key string, transformer Transformer) (interface{}, error) {
-	// find the value from cache first
+func (s *Service) Get(key string, upset func([]byte) (interface{}, error)) (interface{}, error) {
+	// 1. find the value from cache
 	value, err := s.cache.Get(key)
 	if err != nil {
 		return nil, err
@@ -252,49 +239,14 @@ func (s *Service) Get(key string, transformer Transformer) (interface{}, error) 
 		return value, nil
 	}
 
-	var buf []byte
-	// read value from badger
-	if err := s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			if err == badger.ErrKeyNotFound {
-				return nil
-			}
-			return fmt.Errorf("read from badger: %v", err)
-		}
-		if err := item.Value(func(val []byte) error {
-			buf = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return fmt.Errorf("read item value: %v", err)
-		}
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("badger view: %v", err)
-	}
-
-	// create the key and value to cache
-	if buf == nil {
-		newValue := transformer.New()
-		// set the key and new value to cache
-		s.Set(key, newValue)
-
-		return newValue, nil
-	}
-	// update the key and value to cache
-	value, err = transformer.FromBytes(key, buf)
+	// 2. find dimension from badger
+	data, err := s.Query(key)
 	if err != nil {
-		return nil, fmt.Errorf("deserialize %v: %v", key, err)
+		return nil, fmt.Errorf("query badger %v: %v", key, err)
 	}
-	// set the key and new value to cache
-	s.Set(key, value)
 
-	return value, nil
-}
-
-// Update a key and value to badger
-func (s *Service) Update(key string, value interface{}) error {
-	return s.doUpdate(key, value)
+	// create or update the key and value to cache
+	return upset(data)
 }
 
 // Set a key and value to cache
@@ -311,4 +263,45 @@ func (s *Service) Del(key string) error {
 	return s.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete([]byte(key))
 	})
+}
+
+// Len returns the current size of cache
+func (s *Service) Len() int {
+	return s.cache.Len()
+}
+
+// Query the badger with the key
+func (s *Service) Query(key string) ([]byte, error) {
+	var data []byte
+	// 2. find dimension from badger
+	if err := s.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				return nil
+			}
+			return fmt.Errorf("read from badger: %v", err)
+		}
+		if err := item.Value(func(val []byte) error {
+			data = append([]byte{}, val...)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("read item value: %v", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("badger view: %v", err)
+	}
+
+	return data, nil
+}
+
+// Update a key and value to badger
+func (s *Service) Update(key string, value interface{}) error {
+	return s.doUpdate(key, value)
+}
+
+// View iterate the key and value from badger
+func (s *Service) View(fn func(txn *badger.Txn) error) error {
+	return s.db.View(fn)
 }
