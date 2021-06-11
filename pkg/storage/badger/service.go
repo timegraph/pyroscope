@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/badger/gcache"
+	"github.com/pyroscope-io/pyroscope/pkg/util/timer"
 	"github.com/sirupsen/logrus"
 
 	"github.com/dgraph-io/badger/v2"
@@ -101,9 +102,9 @@ func (s *Service) newBadger(config *Config) (*badger.DB, error) {
 		return nil, err
 	}
 	// start the badger GC
-	// timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
-	// 	return db.RunValueLogGC(0.7)
-	// })
+	timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
+		return db.RunValueLogGC(0.7)
+	})
 
 	return db, err
 }
