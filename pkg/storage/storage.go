@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/pyroscope-io/pyroscope/pkg/util/bytesize"
@@ -25,10 +26,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var errClosing = errors.New("the db is in closing state")
-var errOutOfSpace = errors.New("running out of space")
+var errOutOfSpace = errors.New("out of space")
+
+const (
+	Dimension = "i:"
+	Segment   = "s:"
+	Dict      = "d:"
+	Tree      = "t:"
+)
 
 type Storage struct {
+	mutex   sync.Mutex
 	config  *config.Server
 	service *badger.Service
 }
@@ -36,20 +44,63 @@ type Storage struct {
 func New(config *config.Server) (*Storage, error) {
 	// new a badger service with cache for storage
 	service, err := badger.NewService(&badger.Config{
-		Size:        1024 * 1024,
+		Size:        5,
 		StoragePath: config.StoragePath,
 		NoTruncate:  config.BadgerNoTruncate,
 		LogLevel:    config.BadgerLogLevel,
-		Strategy:    badger.LFU,
+		Strategy:    badger.LRU,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &Storage{
+	s := &Storage{
 		config:  config,
 		service: service,
-	}, nil
+	}
+
+	// set the serializer
+	service.SetSerializer(func(k string, v interface{}) (string, []byte, error) {
+		switch v := v.(type) {
+		case *dimension.Dimension:
+			if value, err := v.Bytes(); err != nil {
+				return "", nil, err
+			} else {
+				return Dimension + k, value, nil
+			}
+		case *dict.Dict:
+			if value, err := v.Bytes(); err != nil {
+				return "", nil, err
+			} else {
+				return Dict + k, value, nil
+			}
+		case *segment.Segment:
+			if value, err := v.Bytes(); err != nil {
+				return "", nil, err
+			} else {
+				return Segment + k, value, nil
+			}
+		case *tree.Tree:
+			// parse the main key from tree key
+			dictKey := FromTreeToMainKey(k)
+
+			// get dict from cache or badger
+			di, err := s.getDict(dictKey)
+			if err != nil {
+				return "", nil, err
+			}
+			// serialize the tree
+			value, err := v.Bytes(di, config.MaxNodesSerialization)
+			if err != nil {
+				return "", nil, err
+			}
+			return Tree + k, value, nil
+		default:
+			return k, v.([]byte), nil
+		}
+	})
+
+	return s, nil
 }
 
 type PutInput struct {
@@ -66,9 +117,10 @@ type PutInput struct {
 // getSegment find a segment with key from cache
 func (s *Storage) getSegment(key string) (*segment.Segment, error) {
 	// find segment from cache or badger
-	val, err := s.service.Get(key, func(b []byte) (interface{}, error) {
+	val, err := s.service.Get(Segment, key, func(b []byte) (interface{}, error) {
 		var ns *segment.Segment
 		if b == nil {
+			logrus.Warnf("new segment: %v", key)
 			// create a new segment
 			ns = segment.New()
 		} else {
@@ -98,9 +150,10 @@ func (s *Storage) getSegment(key string) (*segment.Segment, error) {
 // getDimension find a dimension with key from cache
 func (s *Storage) getDimension(key string) (*dimension.Dimension, error) {
 	// find dimension from cache or badger
-	val, err := s.service.Get(key, func(b []byte) (interface{}, error) {
+	val, err := s.service.Get(Dimension, key, func(b []byte) (interface{}, error) {
 		var nd *dimension.Dimension
 		if b == nil {
+			logrus.Warnf("new dimension: %v", key)
 			// create a new dimension
 			nd = dimension.New()
 		} else {
@@ -130,9 +183,10 @@ func (s *Storage) getDimension(key string) (*dimension.Dimension, error) {
 // getDict find a dict with key from cache
 func (s *Storage) getDict(key string) (*dict.Dict, error) {
 	// get dict from cache or badger
-	val, err := s.service.Get(key, func(b []byte) (interface{}, error) {
+	val, err := s.service.Get(Dict, key, func(b []byte) (interface{}, error) {
 		var nd *dict.Dict
 		if b == nil {
+			logrus.Warnf("new dict: %v", key)
 			// create a new dict
 			nd = dict.New()
 		} else {
@@ -162,9 +216,10 @@ func (s *Storage) getDict(key string) (*dict.Dict, error) {
 // getTree find a tree with key from cache
 func (s *Storage) getTree(key string) (*tree.Tree, error) {
 	// get tree from cache or badger
-	val, err := s.service.Get(key, func(b []byte) (interface{}, error) {
+	val, err := s.service.Get(Tree, key, func(b []byte) (interface{}, error) {
 		var nt *tree.Tree
 		if b == nil {
+			logrus.Warnf("new tree: %v", key)
 			// create a new tree
 			nt = tree.New()
 		} else {
@@ -199,6 +254,9 @@ func (s *Storage) getTree(key string) (*tree.Tree, error) {
 }
 
 func (s *Storage) Put(pi *PutInput) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
 	// check if the disk size is out of space
 	freeSpace, _ := disk.FreeSpace(s.config.StoragePath)
 	if freeSpace < s.config.OutOfSpaceThreshold {
@@ -212,24 +270,23 @@ func (s *Storage) Put(pi *PutInput) error {
 		"samples":         pi.Val.Samples(),
 		"units":           pi.Units,
 		"aggregationType": pi.AggregationType,
-	}).Info("storage.Put")
+	}).Warn("storage.Put")
 
 	// update the labels to badger
 	for k, v := range pi.Key.labels {
 		kk := "l:" + k
 		kv := "v:" + k + ":" + v
 		if err := s.service.Update(kk, []byte{}); err != nil {
-			return fmt.Errorf("update badger: %v", err)
+			return fmt.Errorf("update %v: %v", kk, err)
 		}
 		if err := s.service.Update(kv, []byte{}); err != nil {
-			return fmt.Errorf("update badger: %v", err)
+			return fmt.Errorf("update %v: %v", kv, err)
 		}
 	}
 
 	// segement key
 	sk := pi.Key.SegmentKey()
 
-	var err error
 	// update the dimesion and sort the keys
 	for k, v := range pi.Key.labels {
 		key := k + ":" + v
@@ -237,6 +294,9 @@ func (s *Storage) Put(pi *PutInput) error {
 		di, err := s.getDimension(key)
 		if err != nil {
 			return fmt.Errorf("find dimension %v: %v", key, err)
+		}
+		if di == nil {
+			return errors.New("dimension is nil")
 		}
 		di.Insert([]byte(sk))
 	}
@@ -246,6 +306,9 @@ func (s *Storage) Put(pi *PutInput) error {
 	if err != nil {
 		logrus.Errorf("find segment %v: %v", sk, err)
 		return err
+	}
+	if se == nil {
+		return errors.New("segment is nil")
 	}
 	// set the metadata to segement
 	se.SetMetadata(pi.SpyName, pi.SampleRate, pi.Units, pi.AggregationType)
@@ -260,6 +323,10 @@ func (s *Storage) Put(pi *PutInput) error {
 			logrus.Errorf("find tree %v: %v", key, err)
 			return
 		}
+		if mainTree == nil {
+			logrus.Error("tree is nil")
+			return
+		}
 
 		cloneTree := pi.Val.Clone(r)
 		for _, addon := range addons {
@@ -268,6 +335,10 @@ func (s *Storage) Put(pi *PutInput) error {
 			addonTree, err := s.getTree(addonKey)
 			if err != nil {
 				logrus.Errorf("find tree %v: %v", addonKey, err)
+				return
+			}
+			if addonTree == nil {
+				logrus.Error("tree is nil")
 				return
 			}
 			// merge the clone and addon tree
@@ -286,6 +357,7 @@ func (s *Storage) Put(pi *PutInput) error {
 	// update the key and value to cache
 	s.service.Set(sk, se)
 
+	logrus.Warn("storage.Put is done")
 	return nil
 }
 
@@ -320,6 +392,10 @@ func (s *Storage) Get(gi *GetInput) (*GetOutput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("find dimension %v: %v", key, err)
 		}
+		if di == nil {
+			logrus.Error("dimension is nil")
+			continue
+		}
 		dimensions = append(dimensions, di)
 	}
 
@@ -351,6 +427,10 @@ func (s *Storage) Get(gi *GetInput) (*GetOutput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("find segment %v: %v", sk, err)
 		}
+		if se == nil {
+			logrus.Error("segment is nil")
+			continue
+		}
 		// it's an aggregation
 		if se.AggregationType() == "average" {
 			aggregationType = "average"
@@ -370,6 +450,10 @@ func (s *Storage) Get(gi *GetInput) (*GetOutput, error) {
 			tr, err := s.getTree(tk)
 			if err != nil {
 				logrus.Errorf("find tree %v: %v", tk, err)
+				return
+			}
+			if tr == nil {
+				logrus.Error("tree is nil")
 				return
 			}
 
@@ -450,18 +534,18 @@ func (s *Storage) Delete(di *DeleteInput) error {
 		se.Get(di.StartTime, di.EndTime, func(depth int, samples, writes uint64, t time.Time, r *big.Rat) {
 			tk := key.TreeKey(depth, t)
 			// delete the tress from cache and badger
-			s.service.Del(tk)
+			s.service.Del(Tree, tk)
 			// delete the dict from cache and badger
-			s.service.Del(FromTreeToMainKey(tk))
+			s.service.Del(Dict, FromTreeToMainKey(tk))
 		})
 
 		// delete the segment from cache and badger
-		s.service.Del(key.SegmentKey())
+		s.service.Del(Segment, key.SegmentKey())
 	}
 
 	// delete the dimensions from cache and badger
 	for k, v := range di.Key.labels {
-		s.service.Del(k + ":" + v)
+		s.service.Del(Dimension, k+":"+v)
 	}
 
 	return nil

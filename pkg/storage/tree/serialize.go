@@ -223,7 +223,3 @@ func (t *Tree) Bytes(d *dict.Dict, maxNodes int) ([]byte, error) {
 func FromBytes(d *dict.Dict, p []byte) (*Tree, error) {
 	return Deserialize(d, bytes.NewReader(p))
 }
-
-func (t *Tree) New() interface{} {
-	return New()
-}

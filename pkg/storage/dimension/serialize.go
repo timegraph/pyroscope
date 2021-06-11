@@ -47,7 +47,7 @@ func deserialize(r io.Reader) (*Dimension, error) {
 			return nil, err
 		}
 
-		nd.keys = append(nd.keys, key(keyBuf))
+		nd.keys = append(nd.keys, Key(keyBuf))
 	}
 
 	return nd, nil

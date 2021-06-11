@@ -9,7 +9,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pyroscope-io/pyroscope/pkg/storage/badger/gcache"
-	"github.com/pyroscope-io/pyroscope/pkg/util/timer"
 	"github.com/sirupsen/logrus"
 
 	"github.com/dgraph-io/badger/v2"
@@ -73,6 +72,9 @@ type Service struct {
 	cache  Cache         // the cache for badger
 	db     *badger.DB    // the badger for persistence
 	done   chan struct{} // the service is done
+
+	// serialize different structure to bytes
+	serializer func(key string, value interface{}) (string, []byte, error)
 }
 
 func (s *Service) newBadger(config *Config) (*badger.DB, error) {
@@ -99,9 +101,9 @@ func (s *Service) newBadger(config *Config) (*badger.DB, error) {
 		return nil, err
 	}
 	// start the badger GC
-	timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
-		return db.RunValueLogGC(0.7)
-	})
+	// timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
+	// 	return db.RunValueLogGC(0.7)
+	// })
 
 	return db, err
 }
@@ -185,7 +187,16 @@ func (s *Service) flush(goroutines int) {
 			defer wb.Cancel()
 
 			for i := l; i < r; i++ {
-				if err := wb.Set(keys[i].([]byte), values[i].([]byte)); err != nil {
+				k := keys[i].(string)
+
+				key, value, err := s.serializer(k, values[i])
+				if err != nil {
+					logrus.Errorf("serialize: %v", err)
+					continue
+				}
+				logrus.Infof("serialized: %v, %v", key, len(value))
+
+				if err := wb.Set([]byte(key), value); err != nil {
 					logrus.Errorf("write batch set: %v", err)
 				}
 			}
@@ -214,22 +225,35 @@ func (s *Service) Close() {
 
 // handle the evicted item from cache
 func (s *Service) evictHandler(key interface{}, value interface{}) {
+	logrus.Infof("evict key: %v", key)
 	if err := s.doUpdate(key.(string), value); err != nil {
 		logrus.Errorf("do update: %v", err)
 	}
+	logrus.Infof("evict key: %v is done", key)
 }
 
-func (s *Service) doUpdate(key string, value interface{}) error {
+func (s *Service) doUpdate(k string, value interface{}) error {
+	key, buf, err := s.serializer(k, value)
+	if err != nil {
+		return fmt.Errorf("serialize: %v", err)
+	}
+	logrus.Infof("serialized: %v, %v", key, len(buf))
+
 	return s.db.Update(func(txn *badger.Txn) error {
-		if err := txn.Set([]byte(key), value.([]byte)); err != nil {
+		if err := txn.SetEntry(badger.NewEntry([]byte(key), buf)); err != nil {
 			return fmt.Errorf("set entry: %v", err)
 		}
 		return nil
 	})
 }
 
+// SetSerializer update the serializer for service
+func (s *Service) SetSerializer(serializer func(string, interface{}) (string, []byte, error)) {
+	s.serializer = serializer
+}
+
 // Get a key from cache or badger
-func (s *Service) Get(key string, upset func([]byte) (interface{}, error)) (interface{}, error) {
+func (s *Service) Get(prefix string, key string, upset func([]byte) (interface{}, error)) (interface{}, error) {
 	// 1. find the key from cache
 	value, err := s.cache.Get(key)
 	if err != nil {
@@ -240,7 +264,7 @@ func (s *Service) Get(key string, upset func([]byte) (interface{}, error)) (inte
 	}
 
 	// 2. find the key from badger
-	data, err := s.Query(key)
+	data, err := s.Query(prefix + key)
 	if err != nil {
 		return nil, fmt.Errorf("query badger %v: %v", key, err)
 	}
