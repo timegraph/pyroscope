@@ -160,10 +160,13 @@ func (ctrl *Controller) renderIndexPage(dir http.FileSystem, rw http.ResponseWri
 	}
 
 	initialStateObj := indexPageJSON{}
-	ctrl.s.GetValues("__name__", func(v string) bool {
+	if err := ctrl.s.GetValues("__name__", func(v string) bool {
 		initialStateObj.AppNames = append(initialStateObj.AppNames, v)
 		return true
-	})
+	}); err != nil {
+		renderServerError(rw, fmt.Sprintf("find values from storage: %q", err))
+		return
+	}
 	b, err = json.Marshal(initialStateObj)
 	if err != nil {
 		renderServerError(rw, fmt.Sprintf("could not marshal initialStateObj json: %q", err))

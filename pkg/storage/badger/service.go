@@ -230,7 +230,7 @@ func (s *Service) doUpdate(key string, value interface{}) error {
 
 // Get a key from cache or badger
 func (s *Service) Get(key string, upset func([]byte) (interface{}, error)) (interface{}, error) {
-	// 1. find the value from cache
+	// 1. find the key from cache
 	value, err := s.cache.Get(key)
 	if err != nil {
 		return nil, err
@@ -239,7 +239,7 @@ func (s *Service) Get(key string, upset func([]byte) (interface{}, error)) (inte
 		return value, nil
 	}
 
-	// 2. find dimension from badger
+	// 2. find the key from badger
 	data, err := s.Query(key)
 	if err != nil {
 		return nil, fmt.Errorf("query badger %v: %v", key, err)
@@ -255,13 +255,13 @@ func (s *Service) Set(key string, value interface{}) {
 }
 
 // Del a key from cache and badger
-func (s *Service) Del(key string) error {
+func (s *Service) Del(prefix string, key string) error {
 	// delete a key from cache
 	s.cache.Del(key)
 
 	// delete a key from badger
 	return s.db.Update(func(txn *badger.Txn) error {
-		return txn.Delete([]byte(key))
+		return txn.Delete([]byte(prefix + key))
 	})
 }
 

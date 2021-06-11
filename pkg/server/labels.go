@@ -2,18 +2,23 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
 func (ctrl *Controller) labelsHandler(w http.ResponseWriter, _ *http.Request) {
 	res := []string{}
-	ctrl.s.GetKeys(func(k string) bool {
+	if err := ctrl.s.GetKeys(func(k string) bool {
 		res = append(res, k)
 		return true
-	})
+	}); err != nil {
+		renderServerError(w, fmt.Sprintf("find keys from storage: %q", err))
+		return
+	}
 	b, err := json.Marshal(res)
 	if err != nil {
-		panic(err) // TODO: handle
+		renderServerError(w, fmt.Sprintf("json marshal: %q", err))
+		return
 	}
 	w.WriteHeader(200)
 	w.Write(b)
@@ -22,13 +27,17 @@ func (ctrl *Controller) labelsHandler(w http.ResponseWriter, _ *http.Request) {
 func (ctrl *Controller) labelValuesHandler(w http.ResponseWriter, r *http.Request) {
 	res := []string{}
 	labelName := r.URL.Query().Get("label")
-	ctrl.s.GetValues(labelName, func(v string) bool {
+	if err := ctrl.s.GetValues(labelName, func(v string) bool {
 		res = append(res, v)
 		return true
-	})
+	}); err != nil {
+		renderServerError(w, fmt.Sprintf("find values from storage: %q", err))
+		return
+	}
 	b, err := json.Marshal(res)
 	if err != nil {
-		panic(err) // TODO: handle
+		renderServerError(w, fmt.Sprintf("json marshal: %q", err))
+		return
 	}
 	w.WriteHeader(200)
 	w.Write(b)
