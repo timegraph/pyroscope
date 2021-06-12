@@ -48,6 +48,9 @@ type Server struct {
 	CacheSegmentSize    int `def:"1000" desc:"max number of elements in LRU cache for segments"`
 	CacheTreeSize       int `def:"1000" desc:"max number of elements in LRU cache for trees"`
 
+	CacheStrategy string `def:"lfu" desc:"the cache strategy for storage"`
+	CacheSize     int    `def:"1024" desc:"the number of elements in cache"`
+
 	// TODO: I don't think a lot of people will change these values.
 	//   I think these should just be constants.
 	BadgerNoTruncate bool `def:"false" desc:"indicates whether value log files should be truncated to delete corrupt data, if any"`

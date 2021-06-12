@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pyroscope-io/pyroscope/pkg/util/bytesize"
 	"github.com/pyroscope-io/pyroscope/pkg/util/disk"
 	"github.com/pyroscope-io/pyroscope/pkg/util/slices"
@@ -28,9 +29,27 @@ import (
 
 var errOutOfSpace = errors.New("out of space")
 
+var (
+	storagePutCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "storage_put_count",
+		Help: "The storage put count",
+	}, []string{"name"})
+
+	storageGetCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "storage_get_count",
+		Help: "The storage get count",
+	}, []string{"name"})
+)
+
+func init() {
+	prometheus.MustRegister(storagePutCount)
+	prometheus.MustRegister(storageGetCount)
+}
+
 const (
 	Dimension = "i:"
 	Segment   = "s:"
+	DifPrefix = "e:"
 	Dict      = "d:"
 	Tree      = "t:"
 )
@@ -44,11 +63,11 @@ type Storage struct {
 func New(config *config.Server) (*Storage, error) {
 	// new a badger service with cache for storage
 	service, err := badger.NewService(&badger.Config{
-		Size:        5,
+		Size:        config.CacheSize,
 		StoragePath: config.StoragePath,
 		NoTruncate:  config.BadgerNoTruncate,
 		LogLevel:    config.BadgerLogLevel,
-		Strategy:    badger.LRU,
+		Strategy:    config.CacheStrategy,
 	})
 	if err != nil {
 		return nil, err
@@ -80,28 +99,24 @@ type PutInput struct {
 func (s *Storage) serialize(k string, v interface{}) ([]byte, []byte, error) {
 	switch v := v.(type) {
 	case *dimension.Dimension:
-		logrus.Debugf("dimension key: %v", k)
 		dm, err := v.Bytes()
 		if err != nil {
 			return nil, nil, err
 		}
 		return []byte(Dimension + k), dm, nil
 	case *dict.Dict:
-		logrus.Debugf("dict key: %v", k)
 		di, err := v.Bytes()
 		if err != nil {
 			return nil, nil, err
 		}
 		return []byte(Dict + k), di, nil
 	case *segment.Segment:
-		logrus.Debugf("segment key: %v", k)
 		se, err := v.Bytes()
 		if err != nil {
 			return nil, nil, err
 		}
 		return []byte(Segment + k), se, nil
 	case *tree.Tree:
-		logrus.Debugf("tree key: %v", k)
 		// parse the main key from tree key
 		dictKey := FromTreeToMainKey(k)
 
@@ -124,7 +139,7 @@ func (s *Storage) serialize(k string, v interface{}) ([]byte, []byte, error) {
 // getSegment find a segment with key from cache
 func (s *Storage) getSegment(key string) (*segment.Segment, error) {
 	// diff the segment and dict key
-	key = "e:" + key
+	key = DifPrefix + key
 	// find segment from cache or badger
 	val, err := s.service.Get(Segment, key, func(b []byte) (interface{}, error) {
 		var ns *segment.Segment
@@ -348,7 +363,10 @@ func (s *Storage) Put(pi *PutInput) error {
 	})
 
 	// update the key and value to cache
-	s.service.Set("e:"+sk, se)
+	s.service.Set(DifPrefix+sk, se)
+
+	// update the metrics
+	storagePutCount.WithLabelValues(pi.SpyName).Add(1)
 
 	return nil
 }
@@ -463,6 +481,9 @@ func (s *Storage) Get(gi *GetInput) (*GetOutput, error) {
 		Units:      lastSegment.Units(),
 	}
 
+	// update the metrics
+	storageGetCount.WithLabelValues(lastSegment.SpyName()).Add(1)
+
 	return out, nil
 }
 
@@ -521,7 +542,7 @@ func (s *Storage) Delete(di *DeleteInput) error {
 		})
 
 		// delete the segment from cache and badger
-		s.service.Del(Segment, key.SegmentKey())
+		s.service.Del(Segment, DifPrefix+key.SegmentKey())
 	}
 
 	// delete the dimensions from cache and badger

@@ -17,14 +17,10 @@ import (
 )
 
 const (
-	LRU = gcache.LRU // lru cache
-	ARC = gcache.ARC // arc cache
-	LFU = gcache.LFU // lfu cache
-
 	// goroutines for flushing cache to badger
 	defaultFlushGoroutines = 4
 	// the interval time for collecting metrics
-	defaultUpdateInterval = time.Second * 5
+	defaultUpdateInterval = time.Second
 	// the badger name for files
 	defaultBadgerName = "badger"
 )
@@ -44,18 +40,12 @@ var (
 		Name: "cache_hit_rate",
 		Help: "The cache hit rate",
 	})
-
-	storageMissCount = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "storage_miss_count",
-		Help: "The storage miss count",
-	})
 )
 
 func init() {
 	prometheus.MustRegister(cacheHitCount)
 	prometheus.MustRegister(cacheMissCount)
 	prometheus.MustRegister(cacheHitRate)
-	prometheus.MustRegister(storageMissCount)
 }
 
 // Config for badger
