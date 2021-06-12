@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/binary"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,12 +14,13 @@ type Key struct {
 	labels map[string]string
 }
 
-var nameParser *regexp.Regexp
+// TODO: code not used
+// var nameParser *regexp.Regexp
 
 const seed = 6231912
 
 func init() {
-	nameParser = regexp.MustCompile("^(.+)\\{(.+)\\}.*$")
+	// nameParser = regexp.MustCompile("^(.+)\\{(.+)\\}.*$")
 }
 
 type ParserState int

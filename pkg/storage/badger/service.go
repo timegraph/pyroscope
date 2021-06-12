@@ -67,15 +67,22 @@ type Config struct {
 	LogLevel    string // the log level for badger
 }
 
+// CacheItem for eviction
+type CacheItem struct {
+	key   interface{}
+	value interface{}
+}
+
 // Service for badger with cache
 type Service struct {
-	config *Config       // the settings for badger
-	cache  Cache         // the cache for badger
-	db     *badger.DB    // the badger for persistence
-	done   chan struct{} // the service is done
+	config   *Config         // the settings for badger
+	cache    Cache           // the cache for badger
+	db       *badger.DB      // the badger for persistence
+	eviction chan *CacheItem // the channel for eviction
+	done     chan struct{}   // the service is done
 
 	// serialize different structure to bytes
-	serializer func(key string, value interface{}) (string, []byte, error)
+	serializer func(key string, value interface{}) ([]byte, []byte, error)
 }
 
 func (s *Service) newBadger(config *Config) (*badger.DB, error) {
@@ -101,7 +108,8 @@ func (s *Service) newBadger(config *Config) (*badger.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// start the badger GC
+
+	// start a timer for the badger GC
 	timer.StartWorker("badger gc", s.done, 5*time.Minute, func() error {
 		return db.RunValueLogGC(0.7)
 	})
@@ -113,8 +121,9 @@ func (s *Service) newBadger(config *Config) (*badger.DB, error) {
 func NewService(config *Config) (*Service, error) {
 	// new a cache service
 	s := &Service{
-		config: config,
-		done:   make(chan struct{}),
+		config:   config,
+		done:     make(chan struct{}),
+		eviction: make(chan *CacheItem, 1024),
 	}
 
 	// new a badger
@@ -135,32 +144,19 @@ func NewService(config *Config) (*Service, error) {
 	}
 	s.cache = cache
 
+	// start to handle the eviction
+	go s.handleEviction()
+
 	// start a timer to update the metrics periodly
-	s.updateMetrics(defaultUpdateInterval)
+	timer.StartWorker("metrics", s.done, defaultUpdateInterval, func() error {
+		// update the metrics for hit, miss, hit rate
+		cacheHitCount.Set(float64(s.cache.HitCount()))
+		cacheMissCount.Set(float64(s.cache.MissCount()))
+		cacheHitRate.Set(s.cache.HitRate())
+		return nil
+	})
 
 	return s, nil
-}
-
-// update the metrics periodly
-func (s *Service) updateMetrics(interval time.Duration) {
-	go func() {
-		ticker := time.NewTimer(interval)
-		defer ticker.Stop()
-
-		select {
-		case <-s.done:
-			return
-
-		case <-ticker.C:
-			// update the metrics for hit, miss, hit rate
-			cacheHitCount.Set(float64(s.cache.HitCount()))
-			cacheMissCount.Set(float64(s.cache.MissCount()))
-			cacheHitRate.Set(s.cache.HitRate())
-
-			// reset the timer
-			ticker.Reset(interval)
-		}
-	}()
 }
 
 // flush the cache items to badger
@@ -186,18 +182,15 @@ func (s *Service) flush(goroutines int) {
 
 			wb := s.db.NewWriteBatch()
 			defer wb.Cancel()
-
+			// new a write batch for the goroutines
 			for i := l; i < r; i++ {
 				k := keys[i].(string)
-
 				key, value, err := s.serializer(k, values[i])
 				if err != nil {
 					logrus.Errorf("serialize: %v", err)
 					continue
 				}
-				logrus.Infof("serialized: %v, %v", key, len(value))
-
-				if err := wb.Set([]byte(key), value); err != nil {
+				if err := wb.Set(key, value); err != nil {
 					logrus.Errorf("write batch set: %v", err)
 				}
 			}
@@ -224,13 +217,23 @@ func (s *Service) Close() {
 	}
 }
 
-// handle the evicted item from cache
-func (s *Service) evictHandler(key interface{}, value interface{}) {
-	logrus.Infof("evict key: %v", key)
-	if err := s.doUpdate(key.(string), value); err != nil {
-		logrus.Errorf("do update: %v", err)
+// handleEviction save the evicted item to badger
+func (s *Service) handleEviction() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case v := <-s.eviction:
+			if err := s.doUpdate(v.key.(string), v.value); err != nil {
+				logrus.Errorf("do update for eviction: %v", err)
+			}
+		}
 	}
-	logrus.Infof("evict key: %v is done", key)
+}
+
+// handle the evicted item from cache, can't operate the cache in the evict handler
+func (s *Service) evictHandler(key interface{}, value interface{}) {
+	s.eviction <- &CacheItem{key: key, value: value}
 }
 
 func (s *Service) doUpdate(k string, value interface{}) error {
@@ -238,10 +241,9 @@ func (s *Service) doUpdate(k string, value interface{}) error {
 	if err != nil {
 		return fmt.Errorf("serialize: %v", err)
 	}
-	logrus.Infof("serialized: %v, %v", key, len(buf))
 
 	return s.db.Update(func(txn *badger.Txn) error {
-		if err := txn.SetEntry(badger.NewEntry([]byte(key), buf)); err != nil {
+		if err := txn.Set(key, buf); err != nil {
 			return fmt.Errorf("set entry: %v", err)
 		}
 		return nil
@@ -249,7 +251,7 @@ func (s *Service) doUpdate(k string, value interface{}) error {
 }
 
 // SetSerializer update the serializer for service
-func (s *Service) SetSerializer(serializer func(string, interface{}) (string, []byte, error)) {
+func (s *Service) SetSerializer(serializer func(string, interface{}) ([]byte, []byte, error)) {
 	s.serializer = serializer
 }
 

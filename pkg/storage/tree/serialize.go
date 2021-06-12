@@ -128,6 +128,7 @@ func Deserialize(d *dict.Dict, r io.Reader) (*Tree, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		nameBuf, ok := d.Get(labelLinkBuf)
 		if !ok {
 			// these strings has to be at least slightly different, hence base64 Addon

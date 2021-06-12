@@ -48,7 +48,6 @@ func GenerateTimeline(st, et time.Time) *Timeline {
 }
 
 func (tl *Timeline) PopulateTimeline(s *Segment) {
-
 	if s.root == nil {
 		return
 	}
