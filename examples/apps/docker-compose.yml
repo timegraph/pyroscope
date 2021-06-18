@@ -1,0 +1,40 @@
+version: '3'
+services:    
+    etcd:
+        build:
+            context: .
+            dockerfile: Dockerfile.etcd
+        container_name: etcd
+        image: etcd:pyroscope
+        environment:
+            "WESURE_ZONE": "ap-shenzhen-fsi-1"
+        command: [
+            "etcd",
+            "--name=default",
+            "--advertise-client-urls=http://etcd:2379",
+            "--listen-client-urls=http://0.0.0.0:2379",
+            "--listen-peer-urls=http://0.0.0.0:2380"
+        ]
+    # the monitoring system
+    prometheus:
+        container_name: prometheus
+        image: prom/prometheus:v2.26.0
+        volumes:
+            - ./data/prometheus/config:/etc/prometheus
+            - ./data/prometheus/data:/prometheus
+        command: --web.enable-lifecycle --config.file=/etc/prometheus/prometheus.yml
+        ports:
+            - 9090:9090
+        depends_on:
+            - server
+    grafana:
+        container_name: grafana
+        image: grafana/grafana:7.5.4
+        links:
+            - prometheus:prometheus
+        volumes:
+            - ./data/grafana:/var/lib/grafana
+        environment:
+            "GF_SECURITY_ADMIN_PASSWORD": "admin"
+        ports:
+            - 3000:3000
