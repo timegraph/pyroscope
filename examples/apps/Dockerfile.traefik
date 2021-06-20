@@ -1,10 +1,5 @@
 FROM golang:1.16
 
-ENV http_proxy "http://192.168.0.1:1086"
-ENV HTTP_PROXY "http://192.168.0.1:1086"
-ENV https_proxy "http://192.168.0.1:1086"
-ENV HTTPS_PROXY "http://192.168.0.1:1086"
-
 RUN git clone https://github.com/traefik/traefik.git $GOPATH/src/traefik
 WORKDIR $GOPATH/src/traefik
 
@@ -15,6 +10,5 @@ RUN go generate
 RUN GO111MODULE=on go mod tidy
 RUN GO111MODULE=on go build cmd/traefik/traefik.go
 RUN chmod +x traefik
-ENV SERVER_ADDR "http://192.168.0.12:4040"
 
-# ENTRYPOINT ["./traefik"]
+ENTRYPOINT ["./traefik"]

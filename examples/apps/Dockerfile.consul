@@ -1,10 +1,5 @@
 FROM golang:1.16
 
-ENV http_proxy "http://192.168.0.1:1086"
-ENV HTTP_PROXY "http://192.168.0.1:1086"
-ENV https_proxy "http://192.168.0.1:1086"
-ENV HTTPS_PROXY "http://192.168.0.1:1086"
-
 RUN git clone https://github.com/hashicorp/consul.git $GOPATH/src/consul
 WORKDIR $GOPATH/src/consul
 
@@ -13,6 +8,5 @@ COPY main/consul main.go
 RUN GO111MODULE=on go mod tidy
 RUN GO111MODULE=on go build
 RUN chmod +x consul
-ENV SERVER_ADDR "http://192.168.0.12:4040"
 
 ENTRYPOINT ["/go/src/consul/consul", "agent", "-dev"]
