@@ -26,9 +26,10 @@ type OutputFlamebearer struct {
 }
 
 type OutputItem struct {
-	Name  string `json:"name"`
-	Total int    `json:"total"`
-	Self  int    `json:"self"`
+	Name   string `json:"name"`
+	Offset int    `json:"offset"`
+	Total  int    `json:"total"`
+	Self   int    `json:"self"`
 }
 
 func decodeLevels(in *Input) *Output {
@@ -36,16 +37,17 @@ func decodeLevels(in *Input) *Output {
 	outLevels := make([][]OutputItem, 0, len(levels))
 
 	for _, row := range levels {
-		offset := 0
+		prev := 0
 		outRow := make([]OutputItem, 0, len(row))
 
 		for i, N := 0, len(row); i < N; i += 4 {
-			offset += row[i]
 			outItem := OutputItem{
-				Name:  names[row[i+3]],
-				Total: offset + row[i+1],
-				Self:  row[i+2],
+				Name:   names[row[i+3]],
+				Offset: row[i] + prev,
+				Total:  row[i+1],
+				Self:   row[i+2],
 			}
+			prev += row[i] + row[i+1]
 			outRow = append(outRow, outItem)
 		}
 		outLevels = append(outLevels, outRow)
