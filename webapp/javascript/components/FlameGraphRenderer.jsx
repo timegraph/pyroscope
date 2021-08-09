@@ -530,7 +530,8 @@ class FlameGraphRenderer extends React.Component {
     let tablePane = (
       <div
         key={'table-pane'}
-        className={clsx("pane", { hidden: this.state.view === "icicle", "vertical-orientation": this.props.viewType === "double" })}
+        // className={clsx("pane", { hidden: this.state.view === "icicle", "vertical-orientation": this.props.viewType === "double" })}
+        className={clsx("pane", { hidden: false, "vertical-orientation": this.props.viewType === "double" })}
       >
         <ProfilerTable
           flamebearer={this.state.flamebearer}
@@ -638,12 +639,13 @@ class FlameGraphRenderer extends React.Component {
           }
           <div className={clsx("flamegraph-container panes-wrapper", { "vertical-orientation": this.props.viewType === "double" })}>
             {
-              panes.map((pane) => (
-                pane
-              ))
+              flameGraphPane
             }
-            {/* { tablePane }
-            { flameGraphPane } */}
+          </div>
+          <div className={clsx("flamegraph-container panes-wrapper", { "vertical-orientation": this.props.viewType === "double" })}>
+            {
+              tablePane
+            }
           </div>
           <div
             className={clsx("no-data-message", {
