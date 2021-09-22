@@ -304,8 +304,9 @@ func (ctrl *Controller) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func (ctrl *Controller) expectJSON(format string) error {
 	switch format {
-	case "json", "":
+	case "json", "", "go":
 		return nil
+
 	default:
 		return errUnknownFormat
 	}

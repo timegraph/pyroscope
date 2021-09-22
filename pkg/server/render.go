@@ -61,9 +61,24 @@ func (ctrl *Controller) renderHandler(w http.ResponseWriter, r *http.Request) {
 		out = &storage.GetOutput{Tree: tree.New()}
 	}
 
-	fs := out.Tree.FlamebearerStruct(p.maxNodes)
-	res := renderResponse(fs, out)
-	ctrl.writeResponseJSON(w, res)
+	fmt.Println("p.format", p.format)
+	switch p.format {
+	case "go":
+		s, err := out.Tree.GenerateGo()
+		if err != nil {
+			ctrl.writeInternalServerError(w, err, "failed to generate code")
+			return
+		}
+
+		w.Write([]byte(s))
+
+		//		ctrl.writeResponseJSON(w, s)
+	default:
+		fs := out.Tree.FlamebearerStruct(p.maxNodes)
+		res := renderResponse(fs, out)
+		ctrl.writeResponseJSON(w, res)
+	}
+
 }
 
 func (ctrl *Controller) renderDiffHandler(w http.ResponseWriter, r *http.Request) {

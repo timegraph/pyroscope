@@ -1,0 +1,8 @@
+//go:noinline
+func {{ .Name }}() {
+  {{ .Work | work }}
+
+  {{range .ChildrenNodes }}
+  {{ . }}()
+  {{- end}}
+}
