@@ -5,11 +5,12 @@ FROM python:3.9
 # COPY Pipfile.lock ./Pipfile.lock
 # RUN pipenv install
 
-RUN pip3 install flask pyroscope-io==0.3.2
+RUN pip3 install fastapi pyroscope-io==0.3.2 uvicorn[standard]
 
 ENV FLASK_ENV=development
 ENV PYTHONUNBUFFERED=1
 
 COPY lib ./lib
-CMD [ "python", "lib/server.py" ]
+# CMD [ "python", "lib/server.py" ]
+CMD [ "uvicorn", "lib.server:app", "--host", "0.0.0.0", "--port", "5000"]
 
