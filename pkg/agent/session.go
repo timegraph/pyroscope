@@ -22,9 +22,7 @@ import (
 
 	// revive:enable:blank-imports
 
-	"github.com/pyroscope-io/pyroscope/pkg/agent/spy"
 	"github.com/pyroscope-io/pyroscope/pkg/structs/transporttrie"
-	"github.com/shirou/gopsutil/process"
 )
 
 // Each Session can deal with:
@@ -48,20 +46,13 @@ PROFILE TYPES      SPIES                 TRIES     ──► │server│
      1 mem  │     │     │     │ ───► │     │     │ ──► │      │
             └─────┴─────┴─────┘      └─────┴─────┘     └──────┘
 */
-// type process struct {
-// 	pid            int
-// 	spies          []*spy.Spy
-// 	errorThrottler *throttle.Throttler
-// }
-
-const errorThrottlerPeriod = 10 * time.Second
 
 type ProfileSession struct {
 	// configuration, doesn't change
 	upstream         upstream.Upstream
 	spyName          string
 	sampleRate       uint32
-	profileTypes     []spy.ProfileType
+	profileTypes     []ProfileType
 	uploadRate       time.Duration
 	disableGCRuns    bool
 	withSubprocesses bool
@@ -81,7 +72,7 @@ type ProfileSession struct {
 
 	// these slices / maps keep track of processes, spies, and tries
 	// see comment about multiple dimensions above
-	spies map[int][]spy.Spy // pid, profileType
+	spies map[int][]Spy // pid, profileType
 	// string is appName, int is index in pids
 	previousTries map[string][]*transporttrie.Trie
 	tries         map[string][]*transporttrie.Trie
@@ -91,7 +82,7 @@ type SessionConfig struct {
 	Upstream         upstream.Upstream
 	AppName          string
 	Tags             map[string]string
-	ProfilingTypes   []spy.ProfileType
+	ProfilingTypes   []ProfileType
 	DisableGCRuns    bool
 	SpyName          string
 	SampleRate       uint32
@@ -116,12 +107,11 @@ func NewSession(c *SessionConfig, logger Logger) (*ProfileSession, error) {
 		sampleRate:       c.SampleRate,
 		uploadRate:       c.UploadRate,
 		pid:              c.Pid,
-		spies:            make(map[int][]spy.Spy),
+		spies:            make(map[int][]Spy),
 		stopCh:           make(chan struct{}),
 		withSubprocesses: c.WithSubprocesses,
 		clibIntegration:  c.ClibIntegration,
 		logger:           logger,
-		throttler:        throttle.New(errorThrottlerPeriod),
 
 		// string is appName, int is index in pids
 		previousTries: make(map[string][]*transporttrie.Trie),
@@ -133,7 +123,7 @@ func NewSession(c *SessionConfig, logger Logger) (*ProfileSession, error) {
 	return ps, nil
 }
 
-func addSuffix(name string, ptype spy.ProfileType) (string, error) {
+func addSuffix(name string, ptype ProfileType) (string, error) {
 	k, err := segment.ParseKey(name)
 	if err != nil {
 		return "", err
@@ -169,77 +159,33 @@ func mergeTagsWithAppName(appName string, tags map[string]string) (string, error
 	return k.Normalized(), nil
 }
 
-// revive:disable-next-line:cognitive-complexity complexity is fine
-func (ps *ProfileSession) takeSnapshots() {
-	ticker := time.NewTicker(time.Second / time.Duration(ps.sampleRate))
+func (ps *ProfileSession) profileLoop() {
+	ticker := time.NewTicker(ps.uploadRate)
 	defer ticker.Stop()
+
 	for {
 		select {
-		case <-ticker.C:
-			isdueToReset := ps.isDueForReset()
-			// reset the profiler for spies every upload rate(10s), and before uploading, it needs to read profile data every sample rate
-			if isdueToReset {
-				for _, sarr := range ps.spies {
-					for _, s := range sarr {
-						if sr, ok := s.(spy.Resettable); ok {
-							sr.Reset()
-						}
-					}
-				}
-			}
-
-			ps.trieMutex.Lock()
-			pidsToRemove := []int{}
-			for pid, sarr := range ps.spies {
-				for i, s := range sarr {
-					s.Snapshot(func(stack []byte, v uint64, err error) {
-						if err != nil {
-							if ok, pidErr := process.PidExists(int32(pid)); !ok || pidErr != nil {
-								ps.logger.Debugf("error taking snapshot: process doesn't exist?")
-								pidsToRemove = append(pidsToRemove, pid)
-							} else {
-								ps.throttler.Run(func(skipped int) {
-									if skipped > 0 {
-										ps.logger.Errorf("error taking snapshot: %v, %d messages skipped due to throttling", err, skipped)
-									} else {
-										ps.logger.Errorf("error taking snapshot: %v", err)
-									}
-								})
-							}
-							return
-						}
-						if len(stack) > 0 {
-							ps.tries[ps.appName][i].Insert(stack, v, true)
-						}
-					})
-				}
-			}
-			for _, pid := range pidsToRemove {
-				delete(ps.spies, pid)
-			}
-			ps.trieMutex.Unlock()
-
-			// upload the read data to server and reset the start time
-			if isdueToReset {
-				ps.reset()
-			}
-
 		case <-ps.stopCh:
-			// stop the spies
 			for _, sarr := range ps.spies {
 				for _, s := range sarr {
 					s.Stop()
+					// TODO: handle errors
 				}
 			}
-			return
+		case <-ticker.C:
+			for _, sarr := range ps.spies {
+				for _, s := range sarr {
+					s.Reset()
+				}
+			}
 		}
 	}
 }
 
-func (ps *ProfileSession) initializeSpies(pid int) ([]spy.Spy, error) {
-	res := []spy.Spy{}
+func (ps *ProfileSession) initializeSpies(pid int) ([]Spy, error) {
+	res := []Spy{}
 
-	sf, err := spy.StartFunc(ps.spyName)
+	sf, err := StartFunc(ps.spyName)
 	if err != nil {
 		return res, err
 	}
@@ -291,10 +237,12 @@ func (ps *ProfileSession) SetTags(tags map[string]string) error {
 	}
 	return ps.ChangeName(newName)
 }
+
 // SetTag - add a new tag to the session.
 func (ps *ProfileSession) SetTag(key, val string) error {
 	return ps.SetTags(map[string]string{key: val})
 }
+
 // RemoveTags - remove tags from the session.
 func (ps *ProfileSession) RemoveTags(keys ...string) error {
 	removals := make(map[string]string)
@@ -320,16 +268,8 @@ func (ps *ProfileSession) Start() error {
 
 	ps.spies[pid] = spies
 
-	go ps.takeSnapshots()
+	go ps.profileLoop()
 	return nil
-}
-
-func (ps *ProfileSession) isDueForReset() bool {
-	// TODO: duration should be either taken from config or ideally passed from server
-	now := time.Now().Truncate(ps.uploadRate)
-	start := ps.startTime.Truncate(ps.uploadRate)
-
-	return !start.Equal(now)
 }
 
 // the difference between stop and reset is that reset stops current session

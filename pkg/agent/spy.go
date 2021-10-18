@@ -1,17 +1,25 @@
-// Package spy contains an interface (Spy) and functionality to register new spies
-package spy
+package agent
 
 import (
 	"fmt"
+
+	"github.com/pyroscope-io/pyroscope/pkg/structs/transporttrie"
 )
 
 type Spy interface {
 	Stop() error
-	Snapshot(cb func([]byte, uint64, error))
+	Reset() map[string]*transporttrie.Trie
 }
 
-type Resettable interface {
-	Reset()
+// there are two types of spies:
+// * snapshotters
+// * resetters
+// the difference is in the API they implement
+// resetter is a more generic interface, so there's a method to turn a snapshotter into a resetter
+
+type Snapshotter interface {
+	Stop() error
+	Snapshot(cb func([]byte, uint64, error))
 }
 
 type ProfileType string

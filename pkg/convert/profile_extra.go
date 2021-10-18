@@ -3,6 +3,8 @@ package convert
 // These functions are kept separately as profile.pb.go is a generated file
 
 import (
+	"fmt"
+	"log"
 	"sort"
 
 	"github.com/valyala/bytebufferpool"
@@ -22,6 +24,8 @@ func (x *Profile) Get(sampleType string, cb func(name []byte, val int)) error {
 	b := bytebufferpool.Get()
 	defer bytebufferpool.Put(b)
 
+	log.Println("get ---")
+
 	for _, s := range x.Sample {
 		for i := len(s.LocationId) - 1; i >= 0; i-- {
 			name, ok := x.findFunctionName(s.LocationId[i])
@@ -34,6 +38,13 @@ func (x *Profile) Get(sampleType string, cb func(name []byte, val int)) error {
 			_, _ = b.WriteString(name)
 		}
 		cb(b.Bytes(), int(s.Value[valueIndex]))
+
+		for _, l := range s.Label {
+			if l.Str != 0 {
+				fmt.Printf("label %s\n", b.Bytes())
+				fmt.Printf("tags %s %s\n", x.StringTable[l.Key], x.StringTable[l.Str])
+			}
+		}
 		b.Reset()
 	}
 
@@ -47,6 +58,15 @@ func (x *Profile) findFunctionName(locID uint64) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (x *Profile) findTag(keyID uint64) (string, string, bool) {
+	// if loc, ok := x.findLocation(locID); ok {
+	// 	if fn, ok := x.findFunction(loc.Line[0].FunctionId); ok {
+	// 		return x.StringTable[fn.Name], true
+	// 	}
+	// }
+	return "", "", false
 }
 
 func (x *Profile) findLocation(lid uint64) (*Location, bool) {

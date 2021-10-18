@@ -6,7 +6,6 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pyroscope-io/pyroscope/pkg/agent/spy"
 	"github.com/pyroscope-io/pyroscope/pkg/agent/upstream"
 	"github.com/sirupsen/logrus"
 )
@@ -29,7 +28,7 @@ var _ = Describe("agent.Session", func() {
 			s, _ := NewSession(&SessionConfig{
 				Upstream:         u,
 				AppName:          "test-app",
-				ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU},
+				ProfilingTypes:   []ProfileType{ProfileCPU},
 				SpyName:          "debugspy",
 				SampleRate:       100,
 				UploadRate:       uploadRate,
@@ -65,7 +64,7 @@ var _ = Describe("agent.Session", func() {
 				c := &SessionConfig{
 					Upstream:         u,
 					AppName:          "test-app{bar=xxx}",
-					ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU},
+					ProfilingTypes:   []ProfileType{ProfileCPU},
 					SpyName:          "debugspy",
 					SampleRate:       100,
 					UploadRate:       uploadRate,
@@ -98,7 +97,7 @@ var _ = Describe("agent.Session", func() {
 				c := &SessionConfig{
 					Upstream:         u,
 					AppName:          "test-app",
-					ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU},
+					ProfilingTypes:   []ProfileType{ProfileCPU},
 					SpyName:          "debugspy",
 					SampleRate:       100,
 					UploadRate:       uploadRate,
@@ -130,7 +129,7 @@ var _ = Describe("agent.Session", func() {
 				c := &SessionConfig{
 					Upstream:         u,
 					AppName:          "test-app{bar=xxx}",
-					ProfilingTypes:   []spy.ProfileType{spy.ProfileCPU},
+					ProfilingTypes:   []ProfileType{ProfileCPU},
 					SpyName:          "debugspy",
 					SampleRate:       100,
 					UploadRate:       uploadRate,
