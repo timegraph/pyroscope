@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime/pprof"
 
 	"github.com/pyroscope-io/pyroscope/pkg/agent/profiler"
@@ -32,7 +33,7 @@ func slowFunction(c context.Context) {
 
 func main() {
 	profiler.Start(profiler.Config{
-		ApplicationName: "simple.golang.app",
+		ApplicationName: "pprof-test" + os.Getenv("CUSTOM_PPROF"),
 		ServerAddress:   "http://localhost:4040", // this will run inside docker-compose, hence `pyroscope` for hostname
 	})
 	profiler.TagWrapper(context.Background(), profiler.Labels("foo", "bar"), func(c context.Context) {

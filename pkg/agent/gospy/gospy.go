@@ -1,3 +1,4 @@
+//go:build !nogospy
 // +build !nogospy
 
 package gospy
@@ -15,6 +16,7 @@ import (
 	custom_pprof "github.com/pyroscope-io/pyroscope/pkg/agent/pprof"
 	"github.com/pyroscope-io/pyroscope/pkg/agent/spy"
 	"github.com/pyroscope-io/pyroscope/pkg/convert"
+	"github.com/pyroscope-io/pyroscope/pkg/util/pbuf"
 )
 
 // TODO: make this configurable
@@ -80,11 +82,11 @@ func (s *GoSpy) Stop() error {
 //   the idea here is that we can reuse heap profiles
 var (
 	lastProfileMutex     sync.Mutex
-	lastProfile          *convert.Profile
+	lastProfile          pbuf.PprofParser
 	lastProfileCreatedAt time.Time
 )
 
-func getHeapProfile(b *bytes.Buffer) *convert.Profile {
+func getHeapProfile(b *bytes.Buffer) pbuf.PprofParser {
 	lastProfileMutex.Lock()
 	defer lastProfileMutex.Unlock()
 

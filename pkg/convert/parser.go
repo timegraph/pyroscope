@@ -31,6 +31,11 @@ func ParsePprof(r io.Reader) (*Profile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// if os.Getenv("CUSTOM_PPROF") != "" {
+	// 	return pbuf.New(b), nil
+	// }
+
 	profile := &Profile{}
 	if err := proto.Unmarshal(b, profile); err != nil {
 		return nil, err
