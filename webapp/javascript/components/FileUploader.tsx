@@ -6,7 +6,9 @@ import { faTrash } from '@fortawesome/free-solid-svg-icons/faTrash';
 import Button from '@ui/Button';
 import { addNotification } from '../redux/reducers/notifications';
 import styles from './FileUploader.module.scss';
-import { deltaDiffWrapper } from '../util/flamebearer';
+
+import { Tab, Tabs, TabList, TabPanel } from 'react-tabs';
+import 'react-tabs/style/react-tabs.css';
 
 interface Props {
   onUpload: (s: string) => void;
@@ -59,30 +61,85 @@ export default function FileUploader({ file, setFile }: Props) {
       reader.readAsArrayBuffer(file);
     });
   }, []);
+
   const { getRootProps, getInputProps } = useDropzone({
-    multiple: false,
-    onDrop,
     accept: 'application/json',
+    multiple: false,
+    noClick: true,
+    onDrop
   });
 
   const onRemove = () => {
     setFile(null, null);
   };
 
+  const exampleFileNames = ['test.py', 'test.json', 'test.js', 'test.ts', 'test.tsx', 'test.jsx'];
+  const exampleSizes = ['1.5 KB', '1.5 MB', '1.5 GB', '1.5 TB', '1.5 PB', '1.5 EB'];
+  
+  // console.dir(styles);
   return (
     <section className={styles.container}>
-      <div {...getRootProps()}>
+
+              <Tabs>
+    <TabList>
+      <Tab>$PYROSCOPE_DIR</Tab>
+      <Tab>Upload</Tab>
+      <Tab disabled>Disabled example</Tab>
+    </TabList>
+
+    <TabPanel>
+      <div className={styles.tableHeaderContainer}>
+      <table className="flamegraph-table" data-testid="table-view">
+                <thead>
+                  <tr>
+                    <th>
+                      Filename
+                    </th>
+                    <th>
+                      Size
+                    </th>
+                  </tr>
+                </thead>
+      </table>
+      </div>
+      <div className={styles.tableBodyContainer}>
+        <table className="flamegraph-table" data-testid="table-view">
+                <tbody>
+                  {exampleFileNames.map((name, i) => ( <tr key={i}><td>{name}</td><td>{exampleSizes[i]}</td></tr>))}
+                  {/* <td>
+                    test.py
+                  </td>
+                  <td>
+                    1.2 MB
+                  </td> */}
+                </tbody>
+              </table>
+      </div>
+              <div className={styles.buttonRow}>
+                <Button> Open </Button>
+              </div>
+    </TabPanel>
+    <TabPanel>
+    <div className={styles.dragDropZone} {...getRootProps()}>
         <input {...getInputProps()} />
-        {file ? (
-          <p>
-            To analyze another file, drag and drop pyroscope JSON files here or
-            click to select a file
-          </p>
-        ) : (
-          <p>
-            Drag and drop pyroscope JSON files here, or click to select a file
-          </p>
-        )}
+        <div className={styles.instructionText}>
+          {file ? (
+            <p>
+              To analyze another file, drag and drop pyroscope JSON files here or
+              click to select a file
+            </p>
+          ) : (
+            <div>
+              <p>
+                Drag a Pyroscope JSON file here
+              </p>
+
+              <Button> 
+                Select File 
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
       {file && (
         <aside>
@@ -93,6 +150,11 @@ export default function FileUploader({ file, setFile }: Props) {
           </Button>
         </aside>
       )}
+    </TabPanel>
+    <TabPanel>
+      <p>Disabled tab</p>
+    </TabPanel>
+  </Tabs>
     </section>
   );
 }

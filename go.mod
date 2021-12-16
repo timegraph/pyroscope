@@ -14,13 +14,14 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/cheggaaa/pb/v3 v3.0.5
 	github.com/clarkduvall/hyperloglog v0.0.0-20171127014514-a0107a5d8004
-	github.com/cosmtrek/air v1.12.2
+	github.com/cosmtrek/air v1.27.8
 	github.com/creack/pty v1.1.11 // indirect
 	github.com/davecgh/go-spew v1.1.1
 	github.com/dgraph-io/badger/v2 v2.2007.2
 	github.com/dgraph-io/ristretto v0.1.0 // indirect
-	github.com/fatih/color v1.10.0
+	github.com/fatih/color v1.13.0
 	github.com/felixge/fgprof v0.9.1
+	github.com/fsnotify/fsnotify v1.5.1 // indirect
 	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/golang-jwt/jwt v3.2.1+incompatible
 	github.com/golang/mock v1.6.0 // indirect
@@ -34,7 +35,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/iancoleman/strcase v0.2.0
-	github.com/imdario/mergo v0.3.11
+	github.com/imdario/mergo v0.3.12
 	github.com/josephspurrier/goversioninfo v1.2.0
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jsonnet-bundler/jsonnet-bundler v0.4.0
@@ -43,6 +44,7 @@ require (
 	github.com/klauspost/compress v1.13.5
 	github.com/kyoh86/richgo v0.3.3
 	github.com/kyoh86/xdg v1.2.0 // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/mattn/goreman v0.3.5
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
@@ -53,6 +55,7 @@ require (
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f
 	github.com/onsi/ginkgo v1.16.2
 	github.com/onsi/gomega v1.12.0
+	github.com/pelletier/go-toml v1.9.4 // indirect
 	github.com/prometheus/client_golang v1.11.0
 	github.com/prometheus/common v0.32.1
 	github.com/pyroscope-io/client v0.0.0-20211206204731-3fd0a4b8239c
@@ -74,7 +77,7 @@ require (
 	golang.org/x/net v0.0.0-20211020060615-d418f374d309
 	golang.org/x/oauth2 v0.0.0-20211005180243-6b3c2da341f1
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20211020174200-9d6173849985
+	golang.org/x/sys v0.0.0-20211215211219-4abf325e0275
 	golang.org/x/text v0.3.6
 	golang.org/x/tools v0.1.7
 	google.golang.org/protobuf v1.27.1

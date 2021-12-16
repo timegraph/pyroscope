@@ -4,10 +4,45 @@
   // same border as canvas-container
   border: 1px solid #141414;
 
-  padding: 5px 15px 15px;
-  margin: 15px;
+  padding: 5px;
+  margin: 5px;
+  display: flex;
+  justify-content: flex-end;
+  flex-direction: column;
+  max-height: 295px;
 
   &:hover {
     cursor: pointer;
   }
 }
+
+.dragDropZone {
+  border: #686868 2px dashed;
+  border-radius: 1px;
+  margin: auto;
+}
+
+.instructionText {
+  color: #fff;
+  // font-size: 0.8em;
+  margin: auto;
+  text-align: center;
+}
+
+.buttonRow {
+  margin-left: auto;
+  float: right;
+  padding-right: 5px;
+}
+
+.tableHeaderContainer {
+  padding: 5px;
+}
+
+.tableBodyContainer {
+  max-height: 120px;
+  overflow-y: scroll;
+  padding: 5px;
+  margin-bottom: 10px;
+}
+
