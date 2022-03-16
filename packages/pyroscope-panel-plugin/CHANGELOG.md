@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## 1.2.10 (2022-03-16)
+
+
+### Bug Fixes
+
+* disable pyroscope logo ([#890](https://github.com/timegraph/pyroscope/issues/890)) ([0477cff](https://github.com/timegraph/pyroscope/commit/0477cff8565406c330b48c819c0ed16a69653cee))
+* **panel-plugin:** don't load CSS file since it's loaded using css modules ([#891](https://github.com/timegraph/pyroscope/issues/891)) ([183eaa0](https://github.com/timegraph/pyroscope/commit/183eaa0e0e719d4f1c408195a2f2b5912b5071d3))
+
+
+
+
+
 ## [1.2.9](https://github.com/pyroscope-io/pyroscope/compare/@pyroscope/panel-plugin@1.2.8...@pyroscope/panel-plugin@1.2.9) (2022-03-15)
 
 **Note:** Version bump only for package @pyroscope/panel-plugin
